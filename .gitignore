@@ -1,0 +1,33 @@
+# Environment and secrets
+.env
+.env.*
+!.env*.example
+
+# Claude Code project config (may contain secrets)
+.claude/
+.mcp.json
+
+# Python cache/artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Build/distribution artifacts
+build/
+dist/
+*.egg-info/
+
+# Editor/OS noise
+.DS_Store
+.idea/
+.vscode/
+.cursor/

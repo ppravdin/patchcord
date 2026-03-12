@@ -1,0 +1,35 @@
+services:
+  patchcord:
+    build: .
+    image: patchcord-server:latest
+    container_name: patchcord-server
+    restart: unless-stopped
+    env_file:
+      - .env.server
+    environment:
+      PATCHCORD_HOST: 0.0.0.0
+    ports:
+      - "${PATCHCORD_PORT:-8000}:${PATCHCORD_PORT:-8000}"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          pids: 64
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import os,sys,urllib.request; port=os.environ.get('PATCHCORD_PORT','8000'); url=f'http://127.0.0.1:{port}/health'; sys.exit(0 if urllib.request.urlopen(url,timeout=3).getcode()==200 else 1)",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3

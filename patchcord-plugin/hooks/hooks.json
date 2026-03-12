@@ -1,0 +1,28 @@
+{
+  "description": "Auto-check patchcord inbox when idle. Enables persistent listening without a daemon.",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/check-inbox.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "idle_prompt",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/check-inbox.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

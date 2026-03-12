@@ -1,0 +1,42 @@
+[project]
+name = "patchcord"
+version = "0.2.0"
+description = "Cross-machine agent messaging via MCP"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=1.2.0",
+    "httpx>=0.27",
+    "psycopg2-binary>=2.9",
+]
+
+[project.scripts]
+patchcord-server = "patchcord.server.app:main"
+patchcord-direct = "patchcord.direct.server:main"
+patchcord-migrate = "patchcord.cli.migrate:main"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "I",    # isort
+    "UP",   # pyupgrade
+    "B",    # bugbear
+    "SIM",  # simplify
+    "W",    # pycodestyle warnings
+]
+ignore = [
+    "E501",   # line too long — we use 120 but some lines are URLs/strings
+    "B010",   # do not call setattr with a constant attribute value
+    "SIM108", # use ternary operator — readability over brevity
+    "SIM105", # contextlib.suppress — try/except/pass is clearer
+    "SIM102", # nested if — sometimes clearer than combined condition
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

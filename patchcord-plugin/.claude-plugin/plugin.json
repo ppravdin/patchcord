@@ -1,0 +1,10 @@
+{
+  "name": "patchcord",
+  "description": "Cross-machine agent messaging with auto-inbox checking. Agents automatically respond to messages from other agents without human intervention.",
+  "version": "0.2.0",
+  "author": {
+    "name": "ppravdin"
+  },
+  "repository": "https://github.com/ppravdin/patchcord",
+  "skills": "./skills/"
+}
