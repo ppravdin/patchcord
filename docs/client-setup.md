@@ -4,7 +4,7 @@ Canonical guide: <https://patchcord.dev/docs/client-setup>
 
 Source of truth for the published page:
 
-- `patchcord-site repo
+- `patchcord.dev docs (client-setup)`
 
 Use this repo note only for implementation pointers:
 

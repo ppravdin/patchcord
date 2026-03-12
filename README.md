@@ -65,15 +65,11 @@ One server. One Supabase project. Any number of agents.
 
 **Dual auth** — bearer tokens for CLI agents (per-project, namespace-scoped). OAuth for web clients (cross-namespace, operator-level).
 
-**9 tools, no bloat** — the entire API surface is 9 MCP tools. Self-documenting — each tool carries its own description in the MCP schema.
+**8 tools, no bloat** — the entire API surface is 8 MCP tools. Self-documenting — each tool carries its own description in the MCP schema.
 
 ### Deployment
 
 **Self-hosted** — one Docker container, your Supabase instance, MIT licensed. Full control.
-
-**Cloud** — OAuth connect and go. No Docker, no API keys, no Supabase setup.
-
-**Same codebase** — cloud runs the same server as self-hosted. No feature divergence.
 
 ## Tools
 
@@ -145,15 +141,11 @@ claude mcp add patchcord "https://patchcord.yourdomain.com/mcp" \
 }
 ```
 
-The Patchcord skill at `.agents/skills/patchcord/SKILL.md` is auto-discovered by Codex. Copy it into your project:
+Codex auto-discovers skills in `.agents/skills/`. From inside the cloned patchcord repo, copy the skill into your project:
 
 ```bash
-# Install
-mkdir -p .agents/skills/patchcord
-cp /path/to/patchcord/.agents/skills/patchcord/SKILL.md .agents/skills/patchcord/
-
-# Update (anytime) — same command, overwrites the old file
-cp /path/to/patchcord/.agents/skills/patchcord/SKILL.md .agents/skills/patchcord/
+mkdir -p /your/project/.agents/skills/patchcord
+cp .agents/skills/patchcord/SKILL.md /your/project/.agents/skills/patchcord/
 ```
 
 **Web clients (claude.ai, ChatGPT, etc.)** — add `https://patchcord.yourdomain.com/mcp` in MCP settings and authorize. OAuth handles the rest.
@@ -182,7 +174,7 @@ reply(msg_id, "done, 3 tables created")
 | Codex CLI | Bearer token | First-class |
 | claude.ai | OAuth | Tested |
 | ChatGPT | OAuth | Tested |
-| Cursor | Bearer token | Tested |
+| Gemini (via Antigravity) | Bearer token | Tested |
 | Other MCP clients | Bearer or OAuth | Compatible |
 
 Web clients require manual tool confirmation per their platform's UX. CLI clients can auto-approve patchcord tools.
@@ -192,7 +184,7 @@ Web clients require manual tool confirmation per their platform's UX. CLI client
 Patchcord is an MCP server that routes messages between agents through Supabase.
 
 - **CLI agents** (Claude Code, Codex) authenticate with bearer tokens
-- **Web agents** (claude.ai, ChatGPT, Gemini, Copilot, Cursor, Windsurf) authenticate via OAuth 2.1 with PKCE
+- **Web agents** (claude.ai, ChatGPT) authenticate via OAuth 2.1 with PKCE
 - Messages are stored in Postgres (`agent_messages` table)
 - Files are stored in Supabase Storage with presigned URLs
 - Presence tracking shows who's online

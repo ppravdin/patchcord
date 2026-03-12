@@ -42,8 +42,10 @@ if [ -z "$URL" ] || [ -z "$TOKEN" ]; then
 fi
 
 # Check inbox — one lightweight HTTP call
+MACHINE_NAME=$(hostname -s 2>/dev/null || echo "unknown")
 HTTP_CODE=$(curl -s -o /tmp/patchcord_inbox.json -w "%{http_code}" --max-time 5 \
   -H "Authorization: Bearer ${TOKEN}" \
+  -H "x-patchcord-machine: ${MACHINE_NAME}" \
   "${URL}/api/inbox?status=pending&limit=1" 2>/dev/null || echo "000")
 
 if [ "$HTTP_CODE" = "401" ] || [ "$HTTP_CODE" = "403" ]; then

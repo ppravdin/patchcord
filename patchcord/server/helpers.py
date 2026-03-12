@@ -756,6 +756,18 @@ def _request_header(ctx: Context, name: str) -> str:
     return ""
 
 
+def _derive_machine_name_from_request(request: Request, fallback_agent_id: str) -> str:
+    explicit = request.headers.get("x-patchcord-machine", "") or request.headers.get("x-machine-name", "")
+    if explicit:
+        return explicit[:120]
+    forwarded = request.headers.get("cf-connecting-ip") or request.headers.get("x-forwarded-for", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()[:120] or f"agent:{fallback_agent_id}"
+    if request.client and request.client.host:
+        return str(request.client.host)[:120]
+    return f"agent:{fallback_agent_id}"
+
+
 def _derive_machine_name(ctx: Context, fallback_agent_id: str) -> str:
     explicit = _request_header(ctx, "x-patchcord-machine") or _request_header(ctx, "x-machine-name")
     if explicit:
@@ -763,11 +775,7 @@ def _derive_machine_name(ctx: Context, fallback_agent_id: str) -> str:
 
     req = ctx.request_context.request
     if isinstance(req, Request):
-        forwarded = req.headers.get("cf-connecting-ip") or req.headers.get("x-forwarded-for", "")
-        if forwarded:
-            return forwarded.split(",")[0].strip()[:120] or f"agent:{fallback_agent_id}"
-        if req.client and req.client.host:
-            return str(req.client.host)[:120]
+        return _derive_machine_name_from_request(req, fallback_agent_id)
     return f"agent:{fallback_agent_id}"
 
 

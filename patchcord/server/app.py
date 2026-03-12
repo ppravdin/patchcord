@@ -34,13 +34,14 @@ from patchcord.server.config import (
 )
 from patchcord.server.helpers import (
     _delete_rows,
+    _derive_machine_name_from_request,
     _get_messages,
-    _get_registry,
     _get_rows,
     _periodic_cleanup,
     _post_rows,
     _run_cleanup,
     _run_oauth_cleanup,
+    _upsert_registry,
     lookup_bearer_token,
 )
 from patchcord.server.oauth import PatchcordOAuthProvider
@@ -131,21 +132,21 @@ async def api_inbox(request: Request) -> Response:
         }
         for row in rows
     ]
-    # Fetch machine_name from registry for statusline display
-    machine_name = ""
+    # Update presence so machine_name reflects the actual caller
+    machine_name = _derive_machine_name_from_request(request, agent_id_val)
     try:
-        reg = await _get_registry(
+        await _upsert_registry(
             {
-                "namespace_id": f"eq.{namespace_id}",
-                "agent_id": f"eq.{agent_id_val}",
-                "select": "machine_name",
-                "limit": "1",
+                "namespace_id": namespace_id,
+                "agent_id": agent_id_val,
+                "machine_name": machine_name,
+                "status": "online",
+                "last_seen": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
             }
         )
-        if reg:
-            machine_name = reg[0].get("machine_name", "")
     except Exception:
-        _logger.debug("registry lookup failed", exc_info=True)
+        _logger.debug("registry upsert failed", exc_info=True)
 
     return JSONResponse(
         {
