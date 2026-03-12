@@ -145,7 +145,7 @@ Any remote MCP client with OAuth 2.0 support can connect:
 3. Register dynamically at `/register`
 4. Authorize with the identity rules described in [`oauth-web-clients.md`](oauth-web-clients.md)
 
-Known-client detection exists for Claude.ai, ChatGPT, Gemini, Copilot, Cursor, Windsurf, Perplexity, Poe, Mistral, DeepSeek, and Groq. You can extend it with `PATCHCORD_KNOWN_OAUTH_CLIENTS`.
+Known-client detection exists for Claude.ai, ChatGPT, Gemini, Copilot, Cursor, and Windsurf. You can extend it with `PATCHCORD_KNOWN_OAUTH_CLIENTS`.
 
 If you want explicit server-side identities for specific web clients, use `PATCHCORD_OAUTH_CLIENTS`.
 

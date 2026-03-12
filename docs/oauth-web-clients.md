@@ -46,11 +46,6 @@ Built-in known clients include:
 | GitHub Copilot | `github.com/copilot`, `copilot.microsoft.com` | `copilot` |
 | Cursor | `cursor.com`, `cursor.sh` | `cursor` |
 | Windsurf | `windsurf`, `codeium` | `windsurf` |
-| Perplexity | `perplexity.ai` | `perplexity` |
-| Poe | `poe.com` | `poe` |
-| Mistral | `mistral.ai` | `mistral` |
-| DeepSeek | `deepseek.com` | `deepseek` |
-| Groq | `groq.com` | `groq` |
 
 If a client does not match a known pattern but does provide `client_name`, Patchcord derives an agent ID from that name. If neither a known match nor a usable `client_name` exists, registration is rejected.
 

@@ -121,11 +121,6 @@ _DEFAULT_KNOWN_CLIENTS: list[tuple[str, str]] = [
     ("cursor.sh", "cursor"),
     ("windsurf", "windsurf"),
     ("codeium", "windsurf"),
-    ("perplexity.ai", "perplexity"),
-    ("poe.com", "poe"),
-    ("mistral.ai", "mistral"),
-    ("chat.deepseek.com", "deepseek"),
-    ("groq.com", "groq"),
 ]
 
 # Allowed redirect URI domains for known MCP clients.
@@ -137,11 +132,6 @@ _DEFAULT_KNOWN_CLIENT_ALLOWED_DOMAINS: dict[str, list[str]] = {
     "copilot": ["microsoft.com", "github.com", "live.com"],
     "cursor": ["cursor.com", "cursor.sh"],
     "windsurf": ["windsurf.com", "codeium.com"],
-    "perplexity": ["perplexity.ai"],
-    "poe": ["poe.com", "quora.com"],
-    "mistral": ["mistral.ai"],
-    "deepseek": ["deepseek.com"],
-    "groq": ["groq.com"],
 }
 
 
