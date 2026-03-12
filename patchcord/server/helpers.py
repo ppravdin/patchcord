@@ -697,8 +697,11 @@ async def _resolve_target_agent(
     # Normalize to lowercase
     to_agent_raw = to_agent_raw.strip().lower()
 
-    # Parse agent@namespace syntax (available to all agents)
+    # Parse agent@namespace syntax — OAuth agents only (cross-namespace by design).
+    # Bearer token agents are namespace-scoped and cannot target other namespaces.
     if "@" in to_agent_raw:
+        if not is_oauth:
+            raise ValueError("Cross-namespace targeting (agent@namespace) is not allowed for bearer token agents")
         agent_id, target_ns = to_agent_raw.rsplit("@", 1)
         agent_id = agent_id.strip()
         target_ns = target_ns.strip()

@@ -17,7 +17,7 @@ INPUT=$(cat)
 
 # Guard against infinite loops: stop_hook_active is true when Claude
 # is already continuing because a previous Stop hook told it to.
-STOP_ACTIVE=$(echo "$INPUT" | jq -r '.stop_hook_active // false')
+STOP_ACTIVE=$(echo "$INPUT" | jq -r '.stop_hook_active // false' 2>/dev/null || echo "false")
 if [ "$STOP_ACTIVE" = "true" ]; then
   exit 0
 fi
@@ -64,7 +64,7 @@ fi
 RESPONSE=$(cat /tmp/patchcord_inbox.json 2>/dev/null || echo '{"count":0}')
 rm -f /tmp/patchcord_inbox.json
 
-COUNT=$(echo "$RESPONSE" | jq -r '.count // .pending_count // 0')
+COUNT=$(echo "$RESPONSE" | jq -r '.count // .pending_count // 0' 2>/dev/null || echo "0")
 
 if [ "$COUNT" -gt 0 ]; then
   jq -n --arg count "$COUNT" '{
