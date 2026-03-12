@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 from urllib.parse import urlsplit
 
-
 ATTACHMENT_SEGMENT_RE = re.compile(r"[^a-zA-Z0-9._-]+")
 
 DEFAULT_ATTACHMENT_ALLOWED_MIME_TYPES = [

@@ -38,8 +38,7 @@ def _env(name: str) -> str:
     val = os.environ.get(name, "").strip()
     if not val:
         print(
-            f"ERROR: {name} env var is required "
-            "(export it or set it in .env/.env.server)",
+            f"ERROR: {name} env var is required (export it or set it in .env/.env.server)",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -83,6 +82,10 @@ def cmd_add(args: list[str]) -> int:
     if not agent_id:
         print("Usage: manage_tokens add [--namespace <ns>] [--label <label>] [--token <existing>] <agent_id>")
         return 1
+
+    # Normalize to lowercase — agent routing is case-insensitive
+    namespace = namespace.lower()
+    agent_id = agent_id.lower()
 
     url = _env("SUPABASE_URL")
     key = _env("SUPABASE_KEY")

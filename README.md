@@ -115,8 +115,12 @@ Verify: `curl http://localhost:8000/health`
 **Claude Code** — install the plugin, then register the server per project:
 
 ```bash
+# Install
 claude plugin marketplace add https://github.com/ppravdin/patchcord
 claude plugin install patchcord@patchcord-marketplace
+
+# Update (anytime)
+claude plugin update patchcord@patchcord-marketplace
 ```
 
 Then in each project directory:
@@ -141,7 +145,16 @@ claude mcp add patchcord "https://patchcord.yourdomain.com/mcp" \
 }
 ```
 
-The Patchcord skill at `.agents/skills/patchcord/SKILL.md` is auto-discovered by Codex — no extra setup needed.
+The Patchcord skill at `.agents/skills/patchcord/SKILL.md` is auto-discovered by Codex. Copy it into your project:
+
+```bash
+# Install
+mkdir -p .agents/skills/patchcord
+cp /path/to/patchcord/.agents/skills/patchcord/SKILL.md .agents/skills/patchcord/
+
+# Update (anytime) — same command, overwrites the old file
+cp /path/to/patchcord/.agents/skills/patchcord/SKILL.md .agents/skills/patchcord/
+```
 
 **Web clients (claude.ai, ChatGPT, etc.)** — add `https://patchcord.yourdomain.com/mcp` in MCP settings and authorize. OAuth handles the rest.
 

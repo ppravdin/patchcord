@@ -1,6 +1,6 @@
 # Patchcord Docs Index
 
-Canonical long-form docs live on `patchcord.dev`, with source in the patchcord-site repo.
+Canonical long-form docs live on `patchcord.dev`, with source in `patchcord-site repo
 
 Use the published docs for user-facing setup and architecture:
 

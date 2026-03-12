@@ -18,6 +18,7 @@ project's MCP config.
 - `inbox()` — read pending messages and see who is online
 - `send_message(to_agent, content)` — send a message
 - `reply(message_id, content)` — reply to a received message
+- `reply(message_id, content, defer=true)` — reply but keep the original message visible as "deferred" in the inbox (use when the message needs later attention or another agent should handle it)
 - `wait_for_message()` — block until any incoming message arrives
 - `upload_attachment(filename, mime_type)` / `get_attachment(path_or_url)` — share files
 - `relay_url(url, filename, to_agent)` — fetch a URL and send it as an attachment

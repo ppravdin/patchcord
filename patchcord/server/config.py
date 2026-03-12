@@ -52,16 +52,19 @@ def _split_assignments(raw: str) -> list[tuple[str, str]]:
 
 
 def _parse_ns_agent(raw: str) -> tuple[str, str]:
-    """Parse 'ns:agent_id' or bare 'agent_id' (defaults to 'default' namespace)."""
+    """Parse 'ns:agent_id' or bare 'agent_id' (defaults to 'default' namespace).
+
+    Both namespace and agent_id are normalized to lowercase.
+    """
     if ":" in raw:
         ns, agent_id = raw.split(":", 1)
-        ns = ns.strip()
-        agent_id = agent_id.strip()
+        ns = ns.strip().lower()
+        agent_id = agent_id.strip().lower()
         if not ns:
             ns = "default"
     else:
         ns = "default"
-        agent_id = raw.strip()
+        agent_id = raw.strip().lower()
     return ns, agent_id
 
 

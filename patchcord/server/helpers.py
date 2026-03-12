@@ -245,8 +245,8 @@ async def _load_bearer_token_cache() -> None:
         )
         for row in rows:
             token_hash = row.get("token_hash", "")
-            ns = row.get("namespace_id", "default")
-            agent = row.get("agent_id", "")
+            ns = row.get("namespace_id", "default").lower()
+            agent = row.get("agent_id", "").lower()
             if token_hash and agent:
                 _bearer_token_cache[token_hash] = (ns, agent)
         _log.info("loaded %d bearer tokens from DB", len(_bearer_token_cache))
@@ -280,8 +280,8 @@ async def lookup_bearer_token(token: str) -> tuple[str, str] | None:
             {"token_hash": f"eq.{token_hash}", "active": "eq.true", "select": "namespace_id,agent_id", "limit": "1"},
         )
         if rows:
-            ns = rows[0].get("namespace_id", "default")
-            agent = rows[0].get("agent_id", "")
+            ns = rows[0].get("namespace_id", "default").lower()
+            agent = rows[0].get("agent_id", "").lower()
             if agent:
                 _bearer_token_cache[token_hash] = (ns, agent)
                 return (ns, agent)
@@ -652,7 +652,10 @@ async def _oauth_delete_refresh_token_row(refresh_token: str) -> None:
 
 
 def _get_current_identity(ctx: Context) -> tuple[str, str]:
-    """Return (namespace_id, agent_id) from the authenticated token."""
+    """Return (namespace_id, agent_id) from the authenticated token.
+
+    Both values are normalized to lowercase.
+    """
     raw = None
     access = get_access_token()
     if access and access.client_id:
@@ -662,8 +665,9 @@ def _get_current_identity(ctx: Context) -> tuple[str, str]:
     if not raw:
         raise RuntimeError("Unauthorized request")
     if ":" in raw:
-        return raw.split(":", 1)
-    return ("default", raw)
+        ns, agent = raw.split(":", 1)
+        return ns.lower(), agent.lower()
+    return ("default", raw.lower())
 
 
 def _is_oauth_agent(ctx: Context) -> bool:
@@ -690,6 +694,9 @@ async def _resolve_target_agent(
     Handles agent@namespace syntax and cross-namespace lookup for OAuth agents.
     Returns (target_namespace_id, target_agent_id).
     """
+    # Normalize to lowercase
+    to_agent_raw = to_agent_raw.strip().lower()
+
     # Parse agent@namespace syntax (available to all agents)
     if "@" in to_agent_raw:
         agent_id, target_ns = to_agent_raw.rsplit("@", 1)

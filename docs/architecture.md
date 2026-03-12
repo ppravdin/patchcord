@@ -4,7 +4,7 @@ Canonical guide: <https://patchcord.dev/docs/architecture>
 
 Source of truth for the published page:
 
-- `patchcord-site repo, src/app/docs/architecture/page.mdx`
+- `patchcord-site repo
 
 Use this repo note only for implementation pointers:
 

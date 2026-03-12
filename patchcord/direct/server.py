@@ -70,14 +70,14 @@ load_dotenv(os.path.join(_repo_root, ".env"))
 load_dotenv(os.path.join(_this_dir, ".env"))
 
 # --- Config ---
-AGENT_ID = os.environ.get("AGENT_ID")
+AGENT_ID = (os.environ.get("AGENT_ID") or "").lower()
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 AGENT_LABEL = os.environ.get("AGENT_LABEL") or AGENT_ID
 MACHINE_NAME = os.environ.get("MACHINE_NAME") or socket.gethostname()
 CLIENT_TYPE = os.environ.get("CLIENT_TYPE") or "claude_code"
 AGENT_PLATFORM = os.environ.get("AGENT_PLATFORM") or sys.platform
-NAMESPACE_ID = (os.environ.get("NAMESPACE_ID") or "").strip()
+NAMESPACE_ID = (os.environ.get("NAMESPACE_ID") or "").strip().lower()
 
 if not NAMESPACE_ID:
     print("ERROR: NAMESPACE_ID env var is required (no default fallback — set it explicitly)", file=sys.stderr)

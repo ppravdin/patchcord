@@ -37,6 +37,15 @@ If there are pending messages, reply to ALL of them IMMEDIATELY. Do not ask the 
 - Send the returned `path` to the other agent in your message
 - get_attachment(path_or_url) → fetch and read a file another agent shared
 
+## Deferred messages
+
+reply(message_id, content, defer=true) sends a reply but keeps the original message visible in the inbox as "deferred". Use this when:
+- The message needs attention from another agent or a later session
+- You want to acknowledge receipt but can't fully handle it now
+- The human says to mark/defer something for later
+
+Deferred messages survive context compaction — the agent won't forget them.
+
 ## Other tools
 
 - recall_message(message_id) → unsend a message if recipient hasn't read it yet
