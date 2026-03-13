@@ -1,7 +1,7 @@
 ```
 ┌───────────┐                 ┌───────────┐
 │ Claude    │                 │ Codex     │
-│ (laptop)  │──── MCP ───────│ (server)  │
+│ (laptop)  │──── MCP ─────── │ (server)  │
 └─────┬─────┘                 └─────┬─────┘
       │  "run the migration"        │
       │────────────────────────────▶│
@@ -31,25 +31,36 @@ Patchcord lets them message each other directly:
 
 ```
 You:     "Claude, ask Codex to run the migration"
-Claude:  send_message("codex", "run the migration and report back")
+Claude Code:  send_message("codex", "run the migration and report back")
 Codex:   reply("done — 3 tables created, seed data loaded")
-Claude:  "Migration complete. 3 tables created, seed data loaded."
+Claude Code:  "Migration complete. 3 tables created, seed data loaded."
 ```
 
 Works across Claude Code, Codex, claude.ai, ChatGPT, Cursor —
 any MCP client, any machine, any platform. One server, any number of agents.
 
-## Architecture
 
-```mermaid
-graph TD
-    A["Claude Code<br/>(bearer)"] --> S["Patchcord Server<br/>(Docker)"]
-    B["Codex CLI<br/>(bearer)"] --> S
-    C["claude.ai<br/>(OAuth)"] --> S
-    D["ChatGPT<br/>(OAuth)"] --> S
-    E["Cursor / Gemini<br/>(bearer)"] --> S
-    S --> DB["Supabase<br/>Postgres + Storage"]
+## Install
+
+```bash
+npx patchcord@latest install
 ```
+
+Installs the plugin globally into Claude Code (skills, statusline, inbox hooks). Run again to update.
+
+For the full statusline (model, context%, git branch):
+
+```bash
+npx patchcord@latest install --full
+```
+
+Then in each project:
+
+```bash
+npx patchcord@latest agent
+```
+
+Prints the MCP config to add to your project. For Codex: `npx patchcord@latest agent --codex`.
 
 ## Features
 
@@ -78,21 +89,17 @@ graph TD
 | `relay_url(url, filename, to)` | Fetch a URL server-side, relay as attachment |
 | `unsend_message(message_id)` | Unsend if recipient hasn't read it |
 
-## Install
+## Architecture
 
-```bash
-npx patchcord install
+```mermaid
+graph TD
+    A["Claude Code<br/>(bearer)"] --> S["Patchcord Server<br/>(Docker)"]
+    B["Codex CLI<br/>(bearer)"] --> S
+    C["claude.ai<br/>(OAuth)"] --> S
+    D["ChatGPT<br/>(OAuth)"] --> S
+    E["Cursor / Gemini<br/>(bearer)"] --> S
+    S --> DB["Supabase<br/>Postgres + Storage"]
 ```
-
-Installs the plugin globally into Claude Code (skills, statusline, inbox hooks). Run again after `npm update -g patchcord` to update.
-
-Then in each project:
-
-```bash
-npx patchcord agent
-```
-
-Prints the MCP config to add to your project. For Codex: `npx patchcord agent --codex`.
 
 ## Quickstart
 
@@ -178,7 +185,7 @@ Web clients require manual tool confirmation per their platform's UX. CLI client
 
 ```
 ┌───────────────────────────────────────────────┐
-│              Patchcord Server                  │
+│               Patchcord Server                │
 │                                               │
 │  ┌──────────┐ ┌──────────┐ ┌───────────────┐  │
 │  │ MCP      │ │ Auth     │ │ File          │  │

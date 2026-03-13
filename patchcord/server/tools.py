@@ -69,8 +69,11 @@ from patchcord.server.helpers import (
     _resolve_target_agent,
     _storage_request,
     _touch_presence,
+    get_user_namespace_ids,
     http_client,
+    namespace_ids_match,
     ssrf_safe_client,
+    user_ns_filter,
 )
 
 _log = logging.getLogger("patchcord.server.tools")
@@ -112,22 +115,22 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
         if len(content) > MAX_CONTENT_LENGTH:
             return err(f"content exceeds {MAX_CONTENT_LENGTH} characters")
 
-        # Resolve target namespace (cross-namespace for OAuth agents)
+        # Resolve target within user's namespaces
         is_oauth = _is_oauth_agent(ctx)
         try:
             target_ns, to_agent_resolved = await _resolve_target_agent(namespace_id, to_agent, is_oauth)
         except ValueError as exc:
             return err(str(exc))
 
-        # Pre-send inbox guard — OAuth agents check across all namespaces
+        # Pre-send inbox guard — scoped to user's namespaces
+        user_ns = await get_user_namespace_ids(namespace_id)
         guard_params: dict[str, str] = {
             "to_agent": f"eq.{agent_id_val}",
             "status": f"eq.{STATUS_PENDING}",
             "order": "created_at.asc",
             "limit": str(INBOX_PRECHECK_LIMIT),
+            "namespace_id": user_ns_filter(user_ns),
         }
-        if not is_oauth:
-            guard_params["namespace_id"] = f"eq.{namespace_id}"
 
         try:
             raw_pending_for_guard = await _get_messages(guard_params)
@@ -263,9 +266,10 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
                 message_id=message_id,
                 addressed_to=original.get("to_agent"),
             )
-        # Namespace check: token agents must match; OAuth agents can reply cross-namespace
+        # Namespace check: must be within the same user's namespaces
         orig_ns = original.get("namespace_id", "default")
-        if orig_ns != namespace_id and not _is_oauth_agent(ctx):
+        user_ns = await get_user_namespace_ids(namespace_id)
+        if not namespace_ids_match(orig_ns, user_ns):
             return err(
                 "Cannot reply to a message from a different namespace",
                 message_id=message_id,
@@ -328,8 +332,9 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
 
         if msg.get("from_agent") != agent_id_val:
             return err("Cannot recall a message you did not send", message_id=message_id)
-        # Namespace check: token agents must match; OAuth agents can recall cross-namespace
-        if msg.get("namespace_id", "default") != namespace_id and not _is_oauth_agent(ctx):
+        # Namespace check: must be within the same user's namespaces
+        user_ns = await get_user_namespace_ids(namespace_id)
+        if not namespace_ids_match(msg.get("namespace_id", "default"), user_ns):
             return err("Cannot recall a message from a different namespace", message_id=message_id)
 
         status = msg.get("status", "")
@@ -479,7 +484,7 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
         if not to_agent_clean:
             return err("to_agent is required")
 
-        # Resolve target namespace (cross-namespace for OAuth agents)
+        # Resolve target within user's namespaces
         is_oauth = _is_oauth_agent(ctx)
         try:
             target_ns, to_agent_resolved = await _resolve_target_agent(namespace_id, to_agent_clean, is_oauth)
@@ -487,14 +492,14 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
             return err(str(exc))
 
         # --- Send gate: block if sender has unread pending messages ---
+        user_ns = await get_user_namespace_ids(namespace_id)
         guard_params: dict[str, str] = {
             "to_agent": f"eq.{agent_id_val}",
             "status": f"eq.{STATUS_PENDING}",
             "order": "created_at.asc",
             "limit": str(INBOX_PRECHECK_LIMIT),
+            "namespace_id": user_ns_filter(user_ns),
         }
-        if not is_oauth:
-            guard_params["namespace_id"] = f"eq.{namespace_id}"
         try:
             pending_for_guard = await _get_messages(guard_params)
         except Exception as exc:
@@ -657,15 +662,14 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
             if ".." in path_or_url or path_or_url.startswith("/"):
                 return err("Invalid path: traversal not allowed")
 
-            # Path isolation: namespace is the trust boundary.
-            # Bearer-token agents: can access any path within their namespace.
-            # OAuth agents: can access any path (cross-namespace by design).
+            # Path isolation: user is the trust boundary.
+            # Agents can access paths within any of their user's namespaces.
             # Storage paths are namespace/agent_id/timestamp_filename.
-            if not _is_oauth_agent(ctx):
-                parts = path_or_url.split("/")
-                path_ns = parts[0] if len(parts) > 0 else ""
-                if path_ns != namespace_id:
-                    return err(f"Access denied: path belongs to namespace {path_ns!r}, you are in {namespace_id!r}")
+            parts = path_or_url.split("/")
+            path_ns = parts[0] if len(parts) > 0 else ""
+            user_ns = await get_user_namespace_ids(namespace_id)
+            if not namespace_ids_match(path_ns, user_ns):
+                return err(f"Access denied: path belongs to namespace {path_ns!r}")
             encoded = quote(path_or_url, safe="/")
             try:
                 sign_resp = await _storage_request(
@@ -733,7 +737,7 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
         if timeout_seconds > 3600:
             timeout_seconds = 3600
 
-        is_oauth = _is_oauth_agent(ctx)
+        user_ns = await get_user_namespace_ids(namespace_id)
 
         started = time.time()
         poll_interval = 3
@@ -746,9 +750,8 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
                     "status": f"eq.{STATUS_PENDING}",
                     "order": "created_at.asc",
                     "limit": "1",
+                    "namespace_id": user_ns_filter(user_ns),
                 }
-                if not is_oauth:
-                    params["namespace_id"] = f"eq.{namespace_id}"
                 messages = await _get_messages(params)
                 # Self-sends are auto-deferred, so they won't appear in pending queries here
             except Exception as exc:
@@ -802,6 +805,7 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
         inbox_limit = max(1, min(500, inbox_limit))
 
         is_oauth = _is_oauth_agent(ctx)
+        user_ns = await get_user_namespace_ids(namespace_id)
 
         result_data: dict[str, Any] = {
             "status": "ok",
@@ -819,15 +823,14 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
         }
         warnings: list[str] = []
 
-        # Fetch pending + deferred messages; OAuth agents see all namespaces
+        # Fetch pending + deferred messages — scoped to user's namespaces
         inbox_params: dict[str, str] = {
             "to_agent": f"eq.{agent_id_val}",
             "status": f"in.({STATUS_PENDING},{STATUS_DEFERRED})",
             "order": "created_at.asc",
             "limit": str(inbox_limit),
+            "namespace_id": user_ns_filter(user_ns),
         }
-        if not is_oauth:
-            inbox_params["namespace_id"] = f"eq.{namespace_id}"
 
         try:
             raw_messages = await _get_messages(inbox_params)
@@ -868,13 +871,12 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
         if show_presence and helpers.is_registry_disabled():
             warnings.append("agent_registry table unavailable")
         elif show_presence:
-            # OAuth agents see agents across all namespaces; token agents stay scoped
+            # Presence scoped to user's namespaces
             presence_params: dict[str, str] = {
                 "order": "last_seen.desc",
                 "limit": str(agents_limit),
+                "namespace_id": user_ns_filter(user_ns),
             }
-            if not is_oauth:
-                presence_params["namespace_id"] = f"eq.{namespace_id}"
             try:
                 rows = await _get_registry(presence_params)
                 active_rows = []
@@ -897,8 +899,8 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
                             "seconds_since_seen": age_seconds(row.get("last_seen")),
                         }
                     )
-                # Lazy discovery for token agents: show cross-namespace counterparties
-                # that this agent has exchanged messages with.
+                # Counterparty discovery for bearer token agents: show agents from
+                # other namespaces (within the same user) they've exchanged messages with.
                 if not is_oauth:
                     try:
                         existing_ids = {r.get("agent_id") for r in active_rows}
@@ -906,7 +908,7 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
 
                         recv_msgs = await _get_messages(
                             {
-                                "namespace_id": f"eq.{namespace_id}",
+                                "namespace_id": user_ns_filter(user_ns),
                                 "to_agent": f"eq.{agent_id_val}",
                                 "select": "from_agent",
                                 "order": "created_at.desc",
@@ -920,7 +922,7 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
 
                         sent_msgs = await _get_messages(
                             {
-                                "namespace_id": f"eq.{namespace_id}",
+                                "namespace_id": user_ns_filter(user_ns),
                                 "from_agent": f"eq.{agent_id_val}",
                                 "select": "to_agent",
                                 "order": "created_at.desc",
@@ -937,6 +939,7 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
                             cross_rows = await _get_registry(
                                 {
                                     "agent_id": f"in.({ids_str})",
+                                    "namespace_id": user_ns_filter(user_ns),
                                     "order": "last_seen.desc",
                                     "limit": str(min(len(counterparty_ids) * 2, 50)),
                                 }
@@ -993,21 +996,21 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
 
         limit = max(1, min(100, limit))
 
-        # OAuth agents see messages across all namespaces
-        is_oauth = _is_oauth_agent(ctx)
+        # Scoped to user's namespaces
+        user_ns = await get_user_namespace_ids(namespace_id)
+        ns_flt = user_ns_filter(user_ns)
         sent_params: dict[str, str] = {
             "from_agent": f"eq.{agent_id_val}",
             "order": "created_at.desc",
             "limit": str(limit),
+            "namespace_id": ns_flt,
         }
         recv_params: dict[str, str] = {
             "to_agent": f"eq.{agent_id_val}",
             "order": "created_at.desc",
             "limit": str(limit),
+            "namespace_id": ns_flt,
         }
-        if not is_oauth:
-            sent_params["namespace_id"] = f"eq.{namespace_id}"
-            recv_params["namespace_id"] = f"eq.{namespace_id}"
 
         try:
             sent = await _get_messages(sent_params)

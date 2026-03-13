@@ -5,8 +5,13 @@ Cross-machine messaging between Claude Code agents.
 ## Install
 
 ```bash
-npm install -g patchcord
-patchcord init
+npx patchcord@latest install
+```
+
+Or with full statusline (model, context%, git branch):
+
+```bash
+npx patchcord@latest install --full
 ```
 
 The plugin provides skills, statusline integration, and turn-end inbox hooks. The actual Patchcord connection comes from the project's `.mcp.json`.
@@ -73,7 +78,7 @@ By default the statusline shows only Patchcord identity and inbox count. In non-
 To also show model, context usage, repo, and git branch:
 
 ```bash
-bash scripts/enable-statusline.sh --full
+npx patchcord@latest install --full
 ```
 
 Without `--full`:

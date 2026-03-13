@@ -47,6 +47,7 @@ OAUTH_AUTH_CODES_TABLE = "oauth_auth_codes"
 OAUTH_ACCESS_TOKENS_TABLE = "oauth_access_tokens"
 OAUTH_REFRESH_TOKENS_TABLE = "oauth_refresh_tokens"
 BEARER_TOKENS_TABLE = "bearer_tokens"
+USER_NAMESPACES_TABLE = "user_namespaces"
 HEADERS = {
     "apikey": SUPABASE_KEY,
     "Authorization": f"Bearer {SUPABASE_KEY}",
@@ -61,6 +62,7 @@ OAUTH_AUTH_CODES_BASE = f"{SUPABASE_URL}/rest/v1/{OAUTH_AUTH_CODES_TABLE}"
 OAUTH_ACCESS_TOKENS_BASE = f"{SUPABASE_URL}/rest/v1/{OAUTH_ACCESS_TOKENS_TABLE}"
 OAUTH_REFRESH_TOKENS_BASE = f"{SUPABASE_URL}/rest/v1/{OAUTH_REFRESH_TOKENS_TABLE}"
 BEARER_TOKENS_BASE = f"{SUPABASE_URL}/rest/v1/{BEARER_TOKENS_TABLE}"
+USER_NAMESPACES_BASE = f"{SUPABASE_URL}/rest/v1/{USER_NAMESPACES_TABLE}"
 STORAGE_BASE = f"{SUPABASE_URL}/storage/v1"
 
 http_client = httpx.AsyncClient(timeout=30)
@@ -328,6 +330,100 @@ async def deactivate_bearer_token(token: str) -> bool:
     except Exception as exc:
         _log.warning("failed to deactivate bearer token: %s", exc)
         return False
+
+
+# ---------------------------------------------------------------------------
+# User namespace mapping — determines which namespaces belong to the same user
+# ---------------------------------------------------------------------------
+
+# Cache: namespace_id → list of all namespace_ids owned by the same user
+_user_ns_cache: dict[str, list[str]] = {}
+_user_ns_cache_loaded = False
+_user_ns_disabled_until: float = 0.0
+
+
+def _is_user_ns_disabled() -> bool:
+    global _user_ns_disabled_until
+    if _user_ns_disabled_until == 0.0:
+        return False
+    if time.monotonic() >= _user_ns_disabled_until:
+        _user_ns_disabled_until = 0.0
+        _log.warning("user_namespaces circuit breaker reset — retrying")
+        return False
+    return True
+
+
+def _disable_user_ns() -> None:
+    global _user_ns_disabled_until
+    _user_ns_disabled_until = time.monotonic() + CIRCUIT_BREAKER_SECONDS
+    _log.warning("user_namespaces table disabled for %ds (circuit breaker)", CIRCUIT_BREAKER_SECONDS)
+
+
+async def _load_user_ns_cache() -> None:
+    """Load the full user_namespaces table into memory. Called once."""
+    global _user_ns_cache_loaded
+    if _user_ns_cache_loaded or _is_user_ns_disabled():
+        return
+    try:
+        rows = await _get_rows(
+            USER_NAMESPACES_BASE,
+            {"select": "user_id,namespace_id"},
+        )
+        # Build user_id → [namespace_ids] mapping
+        user_to_ns: dict[str, list[str]] = {}
+        for row in rows:
+            uid = row.get("user_id", "")
+            ns = row.get("namespace_id", "")
+            if uid and ns:
+                user_to_ns.setdefault(uid, []).append(ns)
+        # Build namespace_id → [all sibling namespace_ids] cache
+        _user_ns_cache.clear()
+        for _uid, ns_list in user_to_ns.items():
+            for ns in ns_list:
+                _user_ns_cache[ns] = ns_list
+        _log.info("loaded user_namespaces: %d users, %d namespaces", len(user_to_ns), len(_user_ns_cache))
+    except Exception as exc:
+        body = ""
+        if isinstance(exc, httpx.HTTPStatusError):
+            body = exc.response.text.lower()
+        if "user_namespaces" in body and (
+            "does not exist" in body or "not found" in body or "relation" in body or "schema cache" in body
+        ):
+            _disable_user_ns()
+            _log.warning("user_namespaces table not found — user isolation disabled (circuit breaker)")
+        else:
+            _log.warning("failed to load user_namespaces: %s", exc)
+    finally:
+        _user_ns_cache_loaded = True
+
+
+async def get_user_namespace_ids(namespace_id: str) -> list[str]:
+    """Return all namespace_ids owned by the same user who owns *namespace_id*.
+
+    If the user_namespaces table is unavailable or the namespace isn't mapped,
+    returns [namespace_id] (single-namespace fallback — no cross-namespace access).
+    """
+    if _is_user_ns_disabled():
+        return [namespace_id]
+    if not _user_ns_cache_loaded:
+        await _load_user_ns_cache()
+    return _user_ns_cache.get(namespace_id, [namespace_id])
+
+
+def user_ns_filter(namespace_ids: list[str]) -> str:
+    """Build a PostgREST namespace_id filter for a list of namespace_ids.
+
+    Single namespace: 'eq.myns'
+    Multiple: 'in.(ns1,ns2,ns3)'
+    """
+    if len(namespace_ids) == 1:
+        return f"eq.{namespace_ids[0]}"
+    return f"in.({','.join(namespace_ids)})"
+
+
+def namespace_ids_match(ns: str, user_ns_list: list[str]) -> bool:
+    """Check if a namespace belongs to the user's set."""
+    return ns in user_ns_list
 
 
 # ---------------------------------------------------------------------------
@@ -693,25 +789,28 @@ async def _resolve_target_agent(
     to_agent_raw: str,
     is_oauth: bool,
 ) -> tuple[str, str]:
-    """Resolve to_agent potentially across namespaces.
+    """Resolve to_agent within the sender's user scope.
 
-    Handles agent@namespace syntax and cross-namespace lookup for OAuth agents.
+    Handles agent@namespace syntax for cross-namespace targeting within the
+    same user's namespaces. OAuth agents can also do bare-name search across
+    all of the user's namespaces.
     Returns (target_namespace_id, target_agent_id).
     """
     # Normalize to lowercase
     to_agent_raw = to_agent_raw.strip().lower()
 
-    # Parse agent@namespace syntax.
-    # Bearer token agents can only target their own namespace.
-    # OAuth agents can target any namespace (cross-namespace by design).
+    # Get all namespaces owned by this user
+    user_ns = await get_user_namespace_ids(sender_namespace)
+
+    # Parse agent@namespace syntax — allowed for any agent type within user's namespaces
     if "@" in to_agent_raw:
         agent_id, target_ns = to_agent_raw.rsplit("@", 1)
         agent_id = agent_id.strip()
         target_ns = target_ns.strip()
         if not agent_id or not target_ns:
             raise ValueError("Invalid agent@namespace format")
-        if not is_oauth and target_ns != sender_namespace:
-            raise ValueError("Cross-namespace targeting (agent@namespace) is not allowed for bearer token agents")
+        if not namespace_ids_match(target_ns, user_ns):
+            raise ValueError(f"Namespace {target_ns!r} not found")
         return target_ns, agent_id
 
     # Check sender's own namespace first
@@ -729,11 +828,12 @@ async def _resolve_target_agent(
         except Exception:
             _log.debug("registry lookup failed for agent resolution", exc_info=True)
 
-    # If OAuth and not found in sender's namespace, search all namespaces
-    if is_oauth and not is_registry_disabled():
+    # Search across all of the user's namespaces (OAuth or bearer with multi-ns user)
+    if len(user_ns) > 1 and not is_registry_disabled():
         try:
             rows = await _get_registry(
                 {
+                    "namespace_id": user_ns_filter(user_ns),
                     "agent_id": f"eq.{to_agent_raw}",
                     "order": "last_seen.desc",
                     "limit": "10",
@@ -748,7 +848,7 @@ async def _resolve_target_agent(
         except ValueError:
             raise
         except Exception:
-            _log.debug("cross-namespace registry lookup failed", exc_info=True)
+            _log.debug("user-scoped namespace registry lookup failed", exc_info=True)
 
     # Default: same namespace as sender
     return sender_namespace, to_agent_raw

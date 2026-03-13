@@ -21,9 +21,10 @@ if (!cmd || cmd === "help" || cmd === "--help" || cmd === "-h") {
   console.log(`patchcord — agent messaging for Claude Code & Codex
 
 Commands:
-  patchcord install       Install/update plugin globally (Claude Code)
-  patchcord agent         Set up MCP config for an agent in this project
-  patchcord agent --codex Set up Codex skill + MCP config in this project
+  patchcord install            Install/update plugin globally (Claude Code)
+  patchcord install --full     Install + enable full statusline (model, context%, git)
+  patchcord agent              Set up MCP config for an agent in this project
+  patchcord agent --codex      Set up Codex skill + MCP config in this project
 
 Run "patchcord install" once. Run "patchcord agent" in each project.`);
   process.exit(0);
@@ -45,16 +46,57 @@ Then run: patchcord install`);
     process.exit(1);
   }
 
+  const flags = process.argv.slice(3);
+  const fullStatusline = flags.includes("--full");
+
   console.log("Installing patchcord plugin into Claude Code...");
-  const result = run(`claude plugin install --path "${pluginRoot}"`);
-  if (result !== null) {
-    console.log(`✓ Plugin installed. Skills, hooks, and statusline are active.
+
+  // Register npm package as a local marketplace (idempotent)
+  const marketplaceExists = run(`claude plugin marketplace list`)?.includes("patchcord");
+  if (!marketplaceExists) {
+    const addResult = run(`claude plugin marketplace add "${pluginRoot}"`);
+    if (addResult === null) {
+      console.log(`✗ Could not add marketplace. Try manually:
+  claude plugin marketplace add "${pluginRoot}"
+  claude plugin install patchcord`);
+      process.exit(1);
+    }
+  }
+
+  // Install or update the plugin from the marketplace
+  const installed = run(`claude plugin list`)?.includes("patchcord");
+  const result = installed
+    ? run(`claude plugin update patchcord`)
+    : run(`claude plugin install patchcord`);
+  if (result === null && !installed) {
+    console.log(`✗ Plugin install failed. Try manually:
+  claude plugin marketplace add "${pluginRoot}"
+  claude plugin install patchcord`);
+    process.exit(1);
+  }
+
+  // Enable statusline
+  const enableScript = join(pluginRoot, "scripts", "enable-statusline.sh");
+  if (existsSync(enableScript)) {
+    const slArg = fullStatusline ? " --full" : "";
+    const slResult = run(`bash "${enableScript}"${slArg}`);
+    if (slResult !== null) {
+      console.log(`✓ Plugin installed. Statusline${fullStatusline ? " (full)" : ""} enabled.
+
+${fullStatusline
+  ? "Statusline shows: model │ context% │ repo (branch) │ agent@namespace │ inbox"
+  : "Statusline shows: agent@namespace │ inbox\n  Tip: run \"patchcord install --full\" for model, context%, git info too."}
 
 Run "patchcord agent" in each project to set up MCP.`);
+    } else {
+      console.log(`✓ Plugin installed. Statusline setup skipped (non-fatal).
+
+Run "patchcord agent" in each project to set up MCP.`);
+    }
   } else {
-    console.log(`✗ Plugin install failed. Try manually:
-  claude plugin install --path "${pluginRoot}"`);
-    process.exit(1);
+    console.log(`✓ Plugin installed.
+
+Run "patchcord agent" in each project to set up MCP.`);
   }
   process.exit(0);
 }
