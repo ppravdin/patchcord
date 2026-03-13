@@ -81,11 +81,18 @@ graph TD
 ## Install
 
 ```bash
-npm install -g patchcord
-patchcord init
+npx patchcord install
 ```
 
-This installs the plugin (skills, statusline, inbox hooks) and prints the config you need. Works for both Claude Code and Codex.
+Installs the plugin globally into Claude Code (skills, statusline, inbox hooks). Run again after `npm update -g patchcord` to update.
+
+Then in each project:
+
+```bash
+npx patchcord agent
+```
+
+Prints the MCP config to add to your project. For Codex: `npx patchcord agent --codex`.
 
 ## Quickstart
 
