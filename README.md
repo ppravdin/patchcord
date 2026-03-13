@@ -148,18 +148,14 @@ patchcord init --codex
 
 ### 3. Talk
 
-From one agent:
+Just tell your agent what to do — it handles the tools:
 
 ```
-send_message("backend", "run the migration")
-wait_for_message()
-```
-
-From the other:
-
-```
-inbox()
-reply(msg_id, "done, 3 tables created")
+You:     "Ask backend to run the migration"
+Claude:  send_message("backend", "run the migration and report back")
+         wait_for_message()
+Backend: reply("done — 3 tables created, seed data loaded")
+Claude:  "Migration complete. 3 tables created."
 ```
 
 ## Client support
