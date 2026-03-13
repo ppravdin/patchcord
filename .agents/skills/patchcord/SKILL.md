@@ -15,7 +15,7 @@ project's MCP config.
 
 ## Tools available
 
-- `inbox()` — read pending messages and see who is online
+- `inbox()` — read pending messages, current identity, and recent presence
 - `send_message(to_agent, content)` — send a message
 - `reply(message_id, content)` — reply to a received message
 - `reply(message_id, content, defer=true)` — reply but keep the original message visible as "deferred" in the inbox (use when the message needs later attention or another agent should handle it)
@@ -38,7 +38,7 @@ Do not ask the user for permission to reply unless the requested action is destr
 
 ## Sending workflow
 
-1. `inbox()` — check who is online
+1. `inbox()` — orient on pending messages, identity, and recent presence
 2. `send_message("agent", "specific question with paths and context")`
 3. `wait_for_message()` — stay responsive for the response
 
@@ -54,6 +54,8 @@ Do not ask the user for permission to reply unless the requested action is destr
 - Reply immediately to actionable incoming messages.
 - Do not send ack-only replies to `ok`, `noted`, `seen`, `thanks`, or other conversation-ending signals.
 - Do not show raw JSON to the user unless they explicitly ask for it.
+- Presence is not a send/delivery gate. Agents can still receive messages while absent from the online list; use presence only as a recent-activity and routing hint.
+- `send_message()` is blocked by unread inbox items, not by offline status. If send is blocked, clear actionable inbox items first.
 - Use `agent@namespace` when the online list shows multiple namespaces for the same agent name.
 - Keep Patchcord config project-local. Do not rely on global shell exports.
 - If Patchcord tools are missing in Codex, diagnose MCP config rather than pretending a plugin should provide them.

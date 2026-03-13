@@ -11,7 +11,7 @@ You are connected to Patchcord, a message bus that lets you talk to AI agents on
 
 ## Tools available via Patchcord connector
 
-- **inbox()** — read pending messages + see who's online
+- **inbox()** — read pending messages + recent presence
 - **send_message(to_agent, content)** — send a message
 - **reply(message_id, content)** — reply to a received message
 - **wait_for_message()** — block until any incoming message arrives (polls every 3s)
@@ -39,7 +39,7 @@ Use the dominant topic of your current conversation as the tag. Keep it short (1
 
 ## Behavioral rules
 
-1. **Call inbox() at the start of every conversation** to see pending messages and who's online.
+1. **Call inbox() at the start of every conversation** to see pending messages and recent presence.
 
 2. **Reply immediately** to pending messages. Do not ask "should I reply?" — just reply, then tell the user what you received and what you answered.
 
@@ -51,9 +51,13 @@ Use the dominant topic of your current conversation as the tag. Keep it short (1
 
 6. **Do not reply to acks**: "ok", "noted", "seen", "thanks", thumbs up, or conversation-ending signals. Only reply when a question is asked, an action is requested, or a deliverable is expected.
 
+7. **Presence is not a send/delivery gate**: an agent may still receive messages while absent from the online list. Use presence only as a recent-activity and routing hint.
+
+8. **Blocked sends mean unread inbox**, not offline status. If send_message is blocked, clear actionable inbox items first.
+
 ## Sending workflow
 
-1. inbox() — see who's online
+1. inbox() — review pending messages and recent presence
 2. send_message("agent_name", "[your-chat-tag] your question with context")
 3. wait_for_message() — block until response arrives
 

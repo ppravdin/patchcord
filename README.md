@@ -13,21 +13,19 @@
 ---
 
 AI agents live in separate terminals, separate machines, separate platforms.
-They can't talk to each other.
+They can't talk to each other. So you copy-paste between them like it's 2003.
 
-Patchcord gives them a shared message bus over MCP — so a Claude Code session
-on your laptop can ask a Codex agent on your server to run something and wait
-for the answer.
+Patchcord lets them message each other directly:
 
 ```
-Claude Code ──bearer──┐
-Codex CLI ───bearer───┤
-claude.ai ───OAuth────┼──▶ Patchcord Server ──▶ Supabase
-ChatGPT ─────OAuth────┤      (Docker)
-Any MCP client ───────┘
+You:     "Claude, ask Codex to run the migration"
+Claude:  send_message("codex", "run the migration and report back")
+Codex:   reply("done — 3 tables created, seed data loaded")
+Claude:  "Migration complete. 3 tables created, seed data loaded."
 ```
 
-One server. One Supabase project. Any number of agents.
+Works across Claude Code, Codex, claude.ai, ChatGPT, Cursor —
+any MCP client, any machine, any platform. One server, any number of agents.
 
 ## Features
 
@@ -75,8 +73,8 @@ One server. One Supabase project. Any number of agents.
 
 | Tool | What it does |
 |------|-------------|
-| `inbox()` | Read pending messages and presence |
-| `send_message(to, content)` | Send a message (blocked if unread inbox) |
+| `inbox()` | Read pending messages, identity, and recent presence |
+| `send_message(to, content)` | Send a message (blocked only by unread inbox, not by offline status) |
 | `reply(message_id, content)` | Reply to a received message |
 | `wait_for_message()` | Block until a new message arrives |
 | `upload_attachment(filename)` | Get a presigned upload URL |
@@ -185,7 +183,7 @@ Patchcord is an MCP server that routes messages between agents through Supabase.
 - **Web agents** (claude.ai, ChatGPT) authenticate via OAuth 2.1 with PKCE
 - Messages are stored in Postgres (`agent_messages` table)
 - Files are stored in Supabase Storage with presigned URLs
-- Presence tracking shows who's online
+- Presence tracking shows recent activity for routing; it is not a delivery gate
 - Auto-cleanup removes old messages and attachments (default: 7 days)
 
 All agents get the same tools regardless of auth method.

@@ -18,7 +18,7 @@ If there are pending messages, reply to ALL of them IMMEDIATELY. Do not ask the 
 
 ## Sending
 
-1. inbox() — check who's online
+1. inbox() — read pending mail and recent presence for routing
 2. send_message("agent_name", "specific question with file paths and context")
 3. wait_for_message() — auto-wait for any response, don't ask human whether to wait
 
@@ -59,6 +59,8 @@ Deferred messages survive context compaction — the agent won't forget them.
 - Never show raw JSON to the human — summarize naturally
 - One inbox() to orient. Don't call it repeatedly.
 - If user says "check" or "check patchcord" — call inbox()
+- Presence is not a send or delivery gate. Agents may still receive messages while absent from the online list; use presence only as a recent-activity and routing hint.
+- send_message() is blocked by unread inbox items, not by offline status. If sending is blocked, clear actionable inbox items first.
 - Resolve machine names to agent_ids from inbox() results
 - list_recent_debug is for debugging only — never call it routinely
 - Do NOT reply to messages that don't need a response: acks, "ok", "noted", "seen", "👍", confirmations, thumbs up, "thanks", or anything that is clearly a conversation-ending signal. Just read them and move on. Only reply when the message asks a question, requests an action, or expects a deliverable.
