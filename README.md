@@ -1,5 +1,15 @@
 ```
-[Claude] —— "hey" ——▶ [Codex]
+  ┌─────────────┐              ┌─────────────┐
+  │  Claude Code │              │    Codex    │
+  │   (laptop)   │──── MCP ────│   (server)  │
+  └─────────────┘              └─────────────┘
+         │                            │
+         │    "run the migration"     │
+         │ ─────────────────────────▶ │
+         │                            │
+         │    "done, 3 tables"        │
+         │ ◀───────────────────────── │
+         │                            │
 ```
 
 # patchcord
@@ -9,6 +19,10 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ED.svg)](Dockerfile)
+
+---
+
+https://github.com/ppravdin/patchcord/releases/download/v0.2.1/patchcord-demo.mp4
 
 ---
 
@@ -27,47 +41,68 @@ Claude:  "Migration complete. 3 tables created, seed data loaded."
 Works across Claude Code, Codex, claude.ai, ChatGPT, Cursor —
 any MCP client, any machine, any platform. One server, any number of agents.
 
+## How it looks
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                        Your machines                             │
+│                                                                  │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────────┐ │
+│  │  Claude   │  │  Codex   │  │ claude.ai│  │    ChatGPT       │ │
+│  │  Code     │  │  CLI     │  │  (web)   │  │    (web)         │ │
+│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └───────┬──────────┘ │
+│       │              │             │                │            │
+│       │    bearer     │   bearer    │    OAuth       │   OAuth    │
+│       └──────┬───────┘─────┬───────┘───────┬────────┘            │
+│              │             │               │                     │
+│         ┌────▼─────────────▼───────────────▼────┐                │
+│         │         Patchcord Server              │                │
+│         │           (Docker)                    │                │
+│         └──────────────┬────────────────────────┘                │
+│                        │                                         │
+│                 ┌──────▼──────┐                                   │
+│                 │  Supabase   │                                   │
+│                 │  (free tier)│                                   │
+│                 └─────────────┘                                   │
+└──────────────────────────────────────────────────────────────────┘
+```
+
 ## Features
 
-### Messaging
+```
+  Agent A                    Server                    Agent B
+    │                          │                          │
+    │   send_message("B",     │                          │
+    │    "deploy please")      │                          │
+    │ ────────────────────────▶│                          │
+    │                          │   (queued)               │
+    │                          │                          │
+    │   wait_for_message()     │                          │
+    │ ────────────────────────▶│                          │
+    │                          │        inbox()           │
+    │                          │◀─────────────────────────│
+    │                          │                          │
+    │                          │  "deploy please"         │
+    │                          │─────────────────────────▶│
+    │                          │                          │
+    │                          │     reply("done!")       │
+    │                          │◀─────────────────────────│
+    │   "done!"                │                          │
+    │◀─────────────────────────│                          │
+    │                          │                          │
+```
 
-**Async by default** — agents don't need to be online at the same time. Messages queue and deliver when the recipient checks in.
+**Async** — agents don't need to be online at the same time. Messages queue.
 
-**Multi-step conversations** — back-and-forth dialogues, not just fire-and-forget. Agents ask questions, get answers, negotiate, and reach conclusions.
+**Conversations** — back-and-forth, not fire-and-forget. Agents negotiate.
 
-**Deferred messages** — an agent busy with another task can acknowledge a message but keep it visible in its inbox until ready. Deferred messages survive context compaction. The agent won't forget.
+**Deferred** — busy agent? Acknowledge now, handle later. Survives context compaction.
 
-**Send gate** — agents must read their pending messages before sending new ones. No ignored requests, no message flooding.
+**Files** — send attachments between agents. Presigned uploads, no base64 bloat.
 
-### File transfer
+**Namespaces** — your agents are isolated. `frontend@myproject` can't see `frontend@yourproject`.
 
-**Attachments** — send files between agents: documents, images, logs, diffs, structured outputs. One agent sends, another receives and works with it.
-
-**relay_url** — web-platform agents (claude.ai, ChatGPT) can't upload directly due to sandbox restrictions. Give the server a URL — it fetches, stores, and delivers. One tool call, done.
-
-**Presigned upload** — CLI agents get a presigned URL and PUT the file directly. No base64, no token waste, no context bloat.
-
-### Identity & isolation
-
-**Named identities** — every agent has an authenticated name. Messages always show who sent them and where they came from.
-
-**Namespace isolation** — agent groups are scoped by namespace. Your frontend agent can't accidentally message someone else's backend.
-
-**Cross-namespace for operators** — web clients (claude.ai, ChatGPT) see agents across all namespaces the operator owns. CLI agents stay scoped to their project. One chat window, multiple projects.
-
-**Lazy discovery** — agents don't see a wall of all possible agents. They discover each other by interacting.
-
-### Platform
-
-**MCP native** — runs as an MCP server. Any client that speaks MCP can connect.
-
-**Dual auth** — bearer tokens for CLI agents (per-project, namespace-scoped). OAuth for web clients (cross-namespace, operator-level).
-
-**8 tools, no bloat** — the entire API surface is 8 MCP tools. Self-documenting — each tool carries its own description in the MCP schema.
-
-### Deployment
-
-**Self-hosted** — one Docker container, your Supabase instance, MIT licensed. Full control.
+**Any MCP client** — Claude Code, Codex, claude.ai, ChatGPT, Cursor, Gemini. Bearer or OAuth.
 
 ## Tools
 
@@ -173,16 +208,30 @@ Web clients require manual tool confirmation per their platform's UX. CLI client
 
 ## How it works
 
-Patchcord is an MCP server that routes messages between agents through Supabase.
+```
+┌─────────────────────────────────────────────────────────┐
+│                    Patchcord Server                      │
+│                                                         │
+│  ┌─────────┐  ┌──────────┐  ┌─────────┐  ┌──────────┐  │
+│  │  MCP    │  │  Auth    │  │ Message │  │  File    │  │
+│  │ Tools   │  │ Bearer + │  │  Queue  │  │ Storage  │  │
+│  │ (8)     │  │  OAuth   │  │         │  │          │  │
+│  └─────────┘  └──────────┘  └────┬────┘  └────┬─────┘  │
+│                                  │             │        │
+│                            ┌─────▼─────────────▼─────┐  │
+│                            │     Supabase            │  │
+│                            │  Postgres + Storage     │  │
+│                            └─────────────────────────┘  │
+└─────────────────────────────────────────────────────────┘
+```
 
 - **CLI agents** (Claude Code, Codex) authenticate with bearer tokens
 - **Web agents** (claude.ai, ChatGPT) authenticate via OAuth 2.1 with PKCE
-- Messages are stored in Postgres (`agent_messages` table)
-- Files are stored in Supabase Storage with presigned URLs
-- Presence tracking shows recent activity for routing; it is not a delivery gate
-- Auto-cleanup removes old messages and attachments (default: 7 days)
+- Messages are stored in Postgres, files in Supabase Storage
+- Presence tracking shows recent activity — not a delivery gate
+- Auto-cleanup: 7 days default retention
 
-All agents get the same tools regardless of auth method.
+All agents get the same 8 tools regardless of auth method.
 
 ## Security model
 
