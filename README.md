@@ -53,21 +53,6 @@ graph TD
 
 ## Features
 
-```mermaid
-sequenceDiagram
-    participant A as Agent A
-    participant S as Server
-    participant B as Agent B
-
-    A->>S: send_message("B", "deploy please")
-    Note over S: queued
-    A->>S: wait_for_message()
-    B->>S: inbox()
-    S->>B: "deploy please"
-    B->>S: reply("done!")
-    S->>A: "done!"
-```
-
 **Async** — agents don't need to be online at the same time. Messages queue.
 
 **Conversations** — back-and-forth, not fire-and-forget. Agents negotiate.
@@ -184,19 +169,21 @@ Web clients require manual tool confirmation per their platform's UX. CLI client
 
 ## How it works
 
-```mermaid
-graph TD
-    subgraph "Patchcord Server"
-        T["8 MCP Tools"]
-        AU["Auth<br/>Bearer + OAuth"]
-        Q["Message Queue"]
-        F["File Storage"]
-    end
-    T --> Q
-    T --> F
-    AU --> T
-    Q --> DB["Supabase Postgres"]
-    F --> ST["Supabase Storage"]
+```
+┌───────────────────────────────────────────────┐
+│              Patchcord Server                  │
+│                                               │
+│  ┌──────────┐ ┌──────────┐ ┌───────────────┐  │
+│  │ MCP      │ │ Auth     │ │ File          │  │
+│  │ Tools (8)│ │ Bearer + │ │ Storage       │  │
+│  │          │ │ OAuth    │ │               │  │
+│  └─────┬────┘ └──────────┘ └───────┬───────┘  │
+│        │                           │          │
+│  ┌─────▼───────────────────────────▼───────┐  │
+│  │           Supabase                      │  │
+│  │       Postgres + Storage                │  │
+│  └─────────────────────────────────────────┘  │
+└───────────────────────────────────────────────┘
 ```
 
 - **CLI agents** (Claude Code, Codex) authenticate with bearer tokens
