@@ -1,15 +1,13 @@
 ```
-  ┌─────────────┐              ┌─────────────┐
-  │  Claude Code │              │    Codex    │
-  │   (laptop)   │──── MCP ────│   (server)  │
-  └─────────────┘              └─────────────┘
-         │                            │
-         │    "run the migration"     │
-         │ ─────────────────────────▶ │
-         │                            │
-         │    "done, 3 tables"        │
-         │ ◀───────────────────────── │
-         │                            │
+┌───────────┐                 ┌───────────┐
+│ Claude    │                 │ Codex     │
+│ (laptop)  │──── MCP ───────│ (server)  │
+└─────┬─────┘                 └─────┬─────┘
+      │  "run the migration"        │
+      │────────────────────────────▶│
+      │                             │
+      │  "done, 3 tables created"   │
+      │◀────────────────────────────│
 ```
 
 # patchcord
@@ -22,7 +20,7 @@
 
 ---
 
-https://github.com/ppravdin/patchcord/releases/download/v0.2.1/patchcord-demo.mp4
+[![Watch demo](https://patchcord.dev/videos/patchcord-3agents-demo-poster.jpg)](https://patchcord.dev)
 
 ---
 
@@ -41,55 +39,33 @@ Claude:  "Migration complete. 3 tables created, seed data loaded."
 Works across Claude Code, Codex, claude.ai, ChatGPT, Cursor —
 any MCP client, any machine, any platform. One server, any number of agents.
 
-## How it looks
+## Architecture
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                        Your machines                             │
-│                                                                  │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────────┐ │
-│  │  Claude   │  │  Codex   │  │ claude.ai│  │    ChatGPT       │ │
-│  │  Code     │  │  CLI     │  │  (web)   │  │    (web)         │ │
-│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └───────┬──────────┘ │
-│       │              │             │                │            │
-│       │    bearer     │   bearer    │    OAuth       │   OAuth    │
-│       └──────┬───────┘─────┬───────┘───────┬────────┘            │
-│              │             │               │                     │
-│         ┌────▼─────────────▼───────────────▼────┐                │
-│         │         Patchcord Server              │                │
-│         │           (Docker)                    │                │
-│         └──────────────┬────────────────────────┘                │
-│                        │                                         │
-│                 ┌──────▼──────┐                                   │
-│                 │  Supabase   │                                   │
-│                 │  (free tier)│                                   │
-│                 └─────────────┘                                   │
-└──────────────────────────────────────────────────────────────────┘
+```mermaid
+graph TD
+    A["Claude Code<br/>(bearer)"] --> S["Patchcord Server<br/>(Docker)"]
+    B["Codex CLI<br/>(bearer)"] --> S
+    C["claude.ai<br/>(OAuth)"] --> S
+    D["ChatGPT<br/>(OAuth)"] --> S
+    E["Cursor / Gemini<br/>(bearer)"] --> S
+    S --> DB["Supabase<br/>Postgres + Storage"]
 ```
 
 ## Features
 
-```
-  Agent A                    Server                    Agent B
-    │                          │                          │
-    │   send_message("B",     │                          │
-    │    "deploy please")      │                          │
-    │ ────────────────────────▶│                          │
-    │                          │   (queued)               │
-    │                          │                          │
-    │   wait_for_message()     │                          │
-    │ ────────────────────────▶│                          │
-    │                          │        inbox()           │
-    │                          │◀─────────────────────────│
-    │                          │                          │
-    │                          │  "deploy please"         │
-    │                          │─────────────────────────▶│
-    │                          │                          │
-    │                          │     reply("done!")       │
-    │                          │◀─────────────────────────│
-    │   "done!"                │                          │
-    │◀─────────────────────────│                          │
-    │                          │                          │
+```mermaid
+sequenceDiagram
+    participant A as Agent A
+    participant S as Server
+    participant B as Agent B
+
+    A->>S: send_message("B", "deploy please")
+    Note over S: queued
+    A->>S: wait_for_message()
+    B->>S: inbox()
+    S->>B: "deploy please"
+    B->>S: reply("done!")
+    S->>A: "done!"
 ```
 
 **Async** — agents don't need to be online at the same time. Messages queue.
@@ -208,21 +184,19 @@ Web clients require manual tool confirmation per their platform's UX. CLI client
 
 ## How it works
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                    Patchcord Server                      │
-│                                                         │
-│  ┌─────────┐  ┌──────────┐  ┌─────────┐  ┌──────────┐  │
-│  │  MCP    │  │  Auth    │  │ Message │  │  File    │  │
-│  │ Tools   │  │ Bearer + │  │  Queue  │  │ Storage  │  │
-│  │ (8)     │  │  OAuth   │  │         │  │          │  │
-│  └─────────┘  └──────────┘  └────┬────┘  └────┬─────┘  │
-│                                  │             │        │
-│                            ┌─────▼─────────────▼─────┐  │
-│                            │     Supabase            │  │
-│                            │  Postgres + Storage     │  │
-│                            └─────────────────────────┘  │
-└─────────────────────────────────────────────────────────┘
+```mermaid
+graph TD
+    subgraph "Patchcord Server"
+        T["8 MCP Tools"]
+        AU["Auth<br/>Bearer + OAuth"]
+        Q["Message Queue"]
+        F["File Storage"]
+    end
+    T --> Q
+    T --> F
+    AU --> T
+    Q --> DB["Supabase Postgres"]
+    F --> ST["Supabase Storage"]
 ```
 
 - **CLI agents** (Claude Code, Codex) authenticate with bearer tokens
