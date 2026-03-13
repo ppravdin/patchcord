@@ -4,7 +4,7 @@ Canonical guide: <https://patchcord.dev/docs/oauth>
 
 Source of truth for the published page:
 
-- `patchcord.dev docs (oauth)`
+- `patchcord-site repo
 
 Use this repo note only for implementation pointers:
 

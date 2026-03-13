@@ -52,6 +52,7 @@ HEADERS = {
     "Authorization": f"Bearer {SUPABASE_KEY}",
     "Content-Type": "application/json",
     "Prefer": "return=representation",
+    "Cache-Control": "no-cache",
 }
 BASE = f"{SUPABASE_URL}/rest/v1/{TABLE}"
 REGISTRY_BASE = f"{SUPABASE_URL}/rest/v1/{REGISTRY_TABLE}"
@@ -393,7 +394,9 @@ async def _post_message(data: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _get_messages(params: dict[str, str]) -> list[dict[str, Any]]:
-    response = await http_client.get(BASE, headers=HEADERS, params=params)
+    # Cache-bust header to force fresh read through any proxy/pooler layer
+    headers = {**HEADERS, "X-Request-Id": f"{time.time()}"}
+    response = await http_client.get(BASE, headers=headers, params=params)
     response.raise_for_status()
     return response.json()
 
@@ -414,7 +417,8 @@ async def _patch_message(message_id: str, data: dict[str, Any]) -> dict[str, Any
 
 
 async def _get_registry(params: dict[str, str]) -> list[dict[str, Any]]:
-    response = await http_client.get(REGISTRY_BASE, headers=HEADERS, params=params)
+    headers = {**HEADERS, "X-Request-Id": f"{time.time()}"}
+    response = await http_client.get(REGISTRY_BASE, headers=headers, params=params)
     response.raise_for_status()
     return response.json()
 
@@ -697,16 +701,17 @@ async def _resolve_target_agent(
     # Normalize to lowercase
     to_agent_raw = to_agent_raw.strip().lower()
 
-    # Parse agent@namespace syntax — OAuth agents only (cross-namespace by design).
-    # Bearer token agents are namespace-scoped and cannot target other namespaces.
+    # Parse agent@namespace syntax.
+    # Bearer token agents can only target their own namespace.
+    # OAuth agents can target any namespace (cross-namespace by design).
     if "@" in to_agent_raw:
-        if not is_oauth:
-            raise ValueError("Cross-namespace targeting (agent@namespace) is not allowed for bearer token agents")
         agent_id, target_ns = to_agent_raw.rsplit("@", 1)
         agent_id = agent_id.strip()
         target_ns = target_ns.strip()
         if not agent_id or not target_ns:
             raise ValueError("Invalid agent@namespace format")
+        if not is_oauth and target_ns != sender_namespace:
+            raise ValueError("Cross-namespace targeting (agent@namespace) is not allowed for bearer token agents")
         return target_ns, agent_id
 
     # Check sender's own namespace first
@@ -756,19 +761,32 @@ def _request_header(ctx: Context, name: str) -> str:
     return ""
 
 
-def _derive_machine_name_from_request(request: Request, fallback_agent_id: str) -> str:
+def _is_ip_address(value: str) -> bool:
+    """Check if value looks like an IP (v4 or v6) rather than a hostname."""
+    if ":" in value:
+        return True
+    import re
+
+    return bool(re.match(r"^\d+\.\d+\.\d+\.\d+$", value))
+
+
+def _derive_machine_name_from_request(request: Request, fallback_agent_id: str) -> str | None:
+    """Derive machine name from request headers. Returns None if only an IP is available."""
     explicit = request.headers.get("x-patchcord-machine", "") or request.headers.get("x-machine-name", "")
     if explicit:
         return explicit[:120]
     forwarded = request.headers.get("cf-connecting-ip") or request.headers.get("x-forwarded-for", "")
     if forwarded:
-        return forwarded.split(",")[0].strip()[:120] or f"agent:{fallback_agent_id}"
+        ip = forwarded.split(",")[0].strip()[:120]
+        return None if _is_ip_address(ip) else ip
     if request.client and request.client.host:
-        return str(request.client.host)[:120]
-    return f"agent:{fallback_agent_id}"
+        ip = str(request.client.host)[:120]
+        return None if _is_ip_address(ip) else ip
+    return None
 
 
-def _derive_machine_name(ctx: Context, fallback_agent_id: str) -> str:
+def _derive_machine_name(ctx: Context, fallback_agent_id: str) -> str | None:
+    """Derive machine name. Returns None if only an IP is available (preserves existing registry value)."""
     explicit = _request_header(ctx, "x-patchcord-machine") or _request_header(ctx, "x-machine-name")
     if explicit:
         return explicit[:120]
@@ -776,7 +794,7 @@ def _derive_machine_name(ctx: Context, fallback_agent_id: str) -> str:
     req = ctx.request_context.request
     if isinstance(req, Request):
         return _derive_machine_name_from_request(req, fallback_agent_id)
-    return f"agent:{fallback_agent_id}"
+    return None
 
 
 def _derive_client_type(ctx: Context) -> str:
@@ -841,16 +859,19 @@ async def _touch_presence(namespace_id: str, agent_id_val: str, ctx: Context, fo
         if req.url and req.url.hostname:
             meta_dict["request_host"] = req.url.hostname
 
-    payload = {
+    payload: dict[str, Any] = {
         "namespace_id": namespace_id,
         "agent_id": agent_id_val,
         "display_name": display_name,
-        "machine_name": machine_name,
         "status": "online",
         "last_seen": now_iso(),
         "updated_at": now_iso(),
         "meta": meta_dict,
     }
+    # Only update machine_name if we have a real hostname, not an IP fallback.
+    # This preserves the hostname set by the statusline plugin's x-patchcord-machine header.
+    if machine_name is not None:
+        payload["machine_name"] = machine_name
 
     try:
         await _upsert_registry(payload)

@@ -9,8 +9,30 @@ for arg in "$@"; do
     [ "$arg" = "--full" ] && EXTRA_ARGS=" --full"
 done
 
-SETTINGS="$HOME/.claude/settings.json"
-mkdir -p "$HOME/.claude"
+# Find the project root (walk up from cwd to find .mcp.json with patchcord)
+find_project_root() {
+    local dir="${1:-$(pwd)}"
+    while [ -n "$dir" ] && [ "$dir" != "/" ]; do
+        if [ -f "$dir/.mcp.json" ] && jq -e '.mcpServers.patchcord' "$dir/.mcp.json" >/dev/null 2>&1; then
+            printf '%s\n' "$dir"
+            return 0
+        fi
+        dir=$(dirname "$dir")
+    done
+    return 1
+}
+
+PROJECT_ROOT=$(find_project_root || true)
+
+if [ -n "$PROJECT_ROOT" ]; then
+    # Project-level settings (only affects this repo)
+    SETTINGS="$PROJECT_ROOT/.claude/settings.json"
+    mkdir -p "$PROJECT_ROOT/.claude"
+else
+    # Fallback to user-level if no project found
+    SETTINGS="$HOME/.claude/settings.json"
+    mkdir -p "$HOME/.claude"
+fi
 
 # Find the plugin's statusline script
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

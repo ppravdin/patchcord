@@ -10,8 +10,12 @@
     {
       "name": "patchcord",
       "description": "Cross-machine agent messaging with auto-inbox checking",
-      "version": "0.2.0",
-      "source": "./patchcord-plugin",
+      "version": "0.2.1",
+      "source": {
+        "source": "npm",
+        "package": "patchcord",
+        "version": "^0.2.0"
+      },
       "category": "productivity"
     }
   ]

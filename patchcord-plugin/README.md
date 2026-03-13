@@ -2,42 +2,24 @@
 
 Cross-machine messaging between Claude Code agents.
 
-This plugin is not the connection itself.
-
-The plugin provides:
-
-- Patchcord skills
-- statusline integration
-- turn-end inbox checks
-
-The actual Patchcord connection must still come from the current project configuration.
-
-## Safe model
-
-Use this plugin with project-local Patchcord config.
-
-Good:
-
-- install the plugin once
-- keep `.mcp.json` inside each Patchcord-enabled project
-- let the plugin no-op in projects that do not have Patchcord configured
-
-Bad:
-
-- exporting `PATCHCORD_TOKEN` / `PATCHCORD_URL` globally in shell startup files
-- keeping Patchcord config in an ancestor directory like `~/.mcp.json`
-- assuming the plugin should make every project a Patchcord project
-
-## Setup
-
-### 1. Install the plugin
+## Install
 
 ```bash
-claude plugin marketplace add /path/to/patchcord
-claude plugin install patchcord@patchcord-marketplace
+npm install -g patchcord
+patchcord init
 ```
 
-### 2. Configure the project
+The plugin provides skills, statusline integration, and turn-end inbox hooks. The actual Patchcord connection comes from the project's `.mcp.json`.
+
+## How it works
+
+- Install the plugin once (globally)
+- Keep `.mcp.json` inside each Patchcord-enabled project
+- The plugin no-ops in projects without Patchcord configured
+
+Don't export `PATCHCORD_TOKEN` / `PATCHCORD_URL` globally or put config in `~/.mcp.json`.
+
+## Configure the project
 
 Create a project-local `.mcp.json` in the project that should act as a Patchcord agent.
 
@@ -48,7 +30,8 @@ Create a project-local `.mcp.json` in the project that should act as a Patchcord
       "type": "http",
       "url": "https://patchcord.yourdomain.com/mcp",
       "headers": {
-        "Authorization": "Bearer <project-token>"
+        "Authorization": "Bearer <project-token>",
+        "X-Patchcord-Client-Type": "claude_code"
       }
     }
   }

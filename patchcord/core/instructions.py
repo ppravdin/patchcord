@@ -12,7 +12,7 @@ Use list_recent_debug only for debugging message history.
 Use send_message to ask questions to other agents.
 Use reply to respond to a message in your inbox.
 Use wait_for_message after sending or replying - it polls every 3s until any new message arrives.
-Use recall_message to unsend a message — works only if the recipient hasn't read it yet.
+Use unsend_message to unsend a message — works only if the recipient hasn't read it yet.
 
 WORKFLOW when you need info from another agent:
 1. inbox() - see who is online and any pending messages

@@ -30,6 +30,7 @@ services:
           "-c",
           "import os,sys,urllib.request; port=os.environ.get('PATCHCORD_PORT','8000'); url=f'http://127.0.0.1:{port}/health'; sys.exit(0 if urllib.request.urlopen(url,timeout=3).getcode()==200 else 1)",
         ]
-      interval: 30s
-      timeout: 5s
+      interval: 10s
+      timeout: 3s
       retries: 3
+      start_period: 5s

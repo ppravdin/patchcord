@@ -132,19 +132,19 @@ async def api_inbox(request: Request) -> Response:
         }
         for row in rows
     ]
-    # Update presence so machine_name reflects the actual caller
+    # Update presence; only overwrite machine_name if caller sends a real hostname
     machine_name = _derive_machine_name_from_request(request, agent_id_val)
+    reg_payload: dict[str, str] = {
+        "namespace_id": namespace_id,
+        "agent_id": agent_id_val,
+        "status": "online",
+        "last_seen": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if machine_name is not None:
+        reg_payload["machine_name"] = machine_name
     try:
-        await _upsert_registry(
-            {
-                "namespace_id": namespace_id,
-                "agent_id": agent_id_val,
-                "machine_name": machine_name,
-                "status": "online",
-                "last_seen": datetime.now(timezone.utc).isoformat(),
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            }
-        )
+        await _upsert_registry(reg_payload)
     except Exception:
         _logger.debug("registry upsert failed", exc_info=True)
 

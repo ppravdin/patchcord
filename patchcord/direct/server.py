@@ -545,8 +545,8 @@ def wait_for_message(timeout_seconds: int = 300) -> str:
 
 
 @mcp.tool()
-def recall_message(message_id: str) -> str:
-    """Recall (delete) a message you sent, if the recipient has not read it yet."""
+def unsend_message(message_id: str) -> str:
+    """Unsend a message you sent, if the recipient has not read it yet."""
     _touch_presence()
 
     message_id = clean(message_id)

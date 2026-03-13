@@ -176,6 +176,10 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
             except Exception:
                 _log.debug("presence check failed", exc_info=True)
 
+        # Self-sends auto-defer so they survive context compaction and show in inbox
+        is_self_send = to_agent_resolved == agent_id_val and target_ns == namespace_id
+        msg_status = STATUS_DEFERRED if is_self_send else STATUS_PENDING
+
         try:
             result = await _post_message(
                 {
@@ -183,7 +187,7 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
                     "from_agent": agent_id_val,
                     "to_agent": to_agent_resolved,
                     "content": content,
-                    "status": STATUS_PENDING,
+                    "status": msg_status,
                 }
             )
         except Exception as exc:
@@ -298,8 +302,8 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
         )
 
     @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, openWorldHint=False))
-    async def recall_message(message_id: str, ctx: Context) -> str:
-        """Recall (delete) a message you sent, if the recipient has not read it yet."""
+    async def unsend_message(message_id: str, ctx: Context) -> str:
+        """Unsend a message you sent, if the recipient has not read it yet."""
         try:
             namespace_id, agent_id_val = _get_current_identity(ctx)
         except Exception:
@@ -746,8 +750,7 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
                 if not is_oauth:
                     params["namespace_id"] = f"eq.{namespace_id}"
                 messages = await _get_messages(params)
-                # Filter self-messages
-                messages = [m for m in messages if m.get("from_agent") != agent_id_val]
+                # Self-sends are auto-deferred, so they won't appear in pending queries here
             except Exception as exc:
                 return err("Failed while checking for messages", detail=http_error(exc))
 
@@ -808,7 +811,7 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
                 "agent_id": agent_id_val,
                 "agent_tag": agent_tag(namespace_id, agent_id_val),
                 "display_name": _agent_display_name(agent_id_val, ctx),
-                "machine_name": _derive_machine_name(ctx, agent_id_val),
+                "machine_name": _derive_machine_name(ctx, agent_id_val) or "",
                 "client_type": _derive_client_type(ctx),
                 "platform": _derive_platform(ctx),
             },
@@ -828,13 +831,9 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
 
         try:
             raw_messages = await _get_messages(inbox_params)
-            # Split into pending and deferred, excluding self-messages
-            pending = [
-                m for m in raw_messages if m.get("status") == STATUS_PENDING and m.get("from_agent") != agent_id_val
-            ]
-            deferred = [
-                m for m in raw_messages if m.get("status") == STATUS_DEFERRED and m.get("from_agent") != agent_id_val
-            ]
+            # Split into pending and deferred
+            pending = [m for m in raw_messages if m.get("status") == STATUS_PENDING]
+            deferred = [m for m in raw_messages if m.get("status") == STATUS_DEFERRED]
             # Only mark pending messages as read; deferred stay deferred
             for message in raw_messages:
                 if message.get("status") == STATUS_PENDING:

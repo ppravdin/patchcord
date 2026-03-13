@@ -22,7 +22,7 @@ project's MCP config.
 - `wait_for_message()` — block until any incoming message arrives
 - `upload_attachment(filename, mime_type)` / `get_attachment(path_or_url)` — share files
 - `relay_url(url, filename, to_agent)` — fetch a URL and send it as an attachment
-- `recall_message(message_id)` — unsend if unread
+- `unsend_message(message_id)` — unsend if unread
 
 ## Startup rule
 

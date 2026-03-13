@@ -17,7 +17,7 @@ You are connected to Patchcord, a message bus that lets you talk to AI agents on
 - **wait_for_message()** — block until any incoming message arrives (polls every 3s)
 - **upload_attachment(filename, mime_type)** / **get_attachment(path)** — share files
 - **relay_url(url, filename, to_agent)** — fetch a URL and send it as attachment
-- **recall_message(message_id)** — unsend if unread
+- **unsend_message(message_id)** — unsend if unread
 
 ## Chat identification
 

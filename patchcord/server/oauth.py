@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import secrets
 import sys
 import time
 from dataclasses import dataclass
+from typing import Any
 
 from mcp.server.auth.provider import (
     AccessToken,
@@ -27,6 +29,8 @@ from patchcord.server.config import (
     validate_client_uri_redirect_match,
     validate_known_client_redirect_uris,
 )
+
+_log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # OAuth data classes
@@ -202,6 +206,28 @@ class PatchcordOAuthProvider:
                     helpers.disable_oauth_storage()
                 else:
                     raise
+        # Pre-populate agent_registry with client_type so dashboard shows
+        # correct icons immediately, without waiting for a tool call.
+        if not helpers.is_registry_disabled():
+            meta: dict[str, Any] = {"client_type": agent_id_val}
+            if client_info.client_name:
+                meta["client_name"] = client_info.client_name
+            try:
+                await helpers._upsert_registry(
+                    {
+                        "namespace_id": namespace_id,
+                        "agent_id": agent_id_val,
+                        "status": "offline",
+                        "last_seen": now_iso(),
+                        "updated_at": now_iso(),
+                        "meta": meta,
+                    }
+                )
+            except Exception as exc:
+                if helpers.is_missing_registry_table_error(exc):
+                    helpers._disable_registry()
+                else:
+                    _log.debug("failed to pre-populate registry on OAuth register", exc_info=True)
         print(
             f"OAuth client registered: client_id={client_info.client_id} "
             f"client_name={client_info.client_name!r} -> identity={namespace_id}:{agent_id_val}",

@@ -1,0 +1,25 @@
+{
+  "name": "patchcord",
+  "version": "0.2.1",
+  "description": "Cross-machine agent messaging for Claude Code and Codex",
+  "author": "ppravdin",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ppravdin/patchcord"
+  },
+  "homepage": "https://patchcord.dev",
+  "keywords": ["claude-code", "codex", "mcp", "agent", "messaging", "plugin"],
+  "bin": {
+    "patchcord": "./bin/patchcord.mjs"
+  },
+  "files": [
+    "bin/",
+    ".claude-plugin/",
+    "hooks/",
+    "scripts/",
+    "skills/",
+    "codex/",
+    "README.md"
+  ]
+}

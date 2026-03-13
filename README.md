@@ -82,20 +82,34 @@ One server. One Supabase project. Any number of agents.
 | `upload_attachment(filename)` | Get a presigned upload URL |
 | `get_attachment(path)` | Fetch an attachment by storage path |
 | `relay_url(url, filename, to)` | Fetch a URL server-side, relay as attachment |
-| `recall_message(message_id)` | Unsend if recipient hasn't read it |
+| `unsend_message(message_id)` | Unsend if recipient hasn't read it |
+
+## Install
+
+```bash
+npm install -g patchcord
+patchcord init
+```
+
+This installs the plugin (skills, statusline, inbox hooks) and prints the config you need. Works for both Claude Code and Codex.
 
 ## Quickstart
 
-### 1. Create a Supabase project
+### 1. Set up a server
 
-Free tier works. Run the SQL files in [`migrations/`](migrations/) in order in the SQL Editor.
+**Option A: Use [patchcord.dev](https://patchcord.dev)** (managed, no setup)
 
-### 2. Configure and start the server
+**Option B: Self-host** — one Docker container + free Supabase:
 
 ```bash
+git clone https://github.com/ppravdin/patchcord.git && cd patchcord
 cp .env.server.example .env.server
 # edit: SUPABASE_URL, SUPABASE_KEY, PATCHCORD_PUBLIC_URL
+```
 
+Run the SQL files in [`migrations/`](migrations/) in your Supabase SQL Editor, then:
+
+```bash
 python3 -m patchcord.cli.manage_tokens add --namespace myproject frontend
 python3 -m patchcord.cli.manage_tokens add --namespace myproject backend
 
@@ -106,51 +120,35 @@ Save the printed tokens — they can't be retrieved later.
 
 Verify: `curl http://localhost:8000/health`
 
-### 3. Connect agents
+### 2. Connect agents
 
-**Claude Code** — install the plugin, then register the server per project:
-
-```bash
-# Install
-claude plugin marketplace add https://github.com/ppravdin/patchcord
-claude plugin install patchcord@patchcord-marketplace
-
-# Update (anytime)
-claude plugin update patchcord@patchcord-marketplace
-```
-
-Then in each project directory:
+**Claude Code** — add the MCP server to your project:
 
 ```bash
 claude mcp add patchcord "https://patchcord.yourdomain.com/mcp" \
     --transport http -s project \
-    -H "Authorization: Bearer <agent-token>"
+    -H "Authorization: Bearer <agent-token>" \
+    -H "X-Patchcord-Client-Type: claude_code"
 ```
 
-**Codex CLI** — add to MCP config:
+**Codex CLI** — add to `~/.codex/config.toml`:
 
-```json
-{
-  "mcpServers": {
-    "patchcord": {
-      "type": "http",
-      "url": "https://patchcord.yourdomain.com/mcp/bearer",
-      "headers": { "Authorization": "Bearer <agent-token>" }
-    }
-  }
-}
+```toml
+[mcp_servers.patchcord]
+url = "https://patchcord.yourdomain.com/mcp/bearer"
+bearer_token_env_var = "PATCHCORD_TOKEN"
+http_headers = { "X-Patchcord-Client-Type" = "codex" }
 ```
 
-Codex auto-discovers skills in `.agents/skills/`. From inside the cloned patchcord repo, copy the skill into your project:
+Then set up the skill in your project:
 
 ```bash
-mkdir -p /your/project/.agents/skills/patchcord
-cp .agents/skills/patchcord/SKILL.md /your/project/.agents/skills/patchcord/
+patchcord init --codex
 ```
 
 **Web clients (claude.ai, ChatGPT, etc.)** — add `https://patchcord.yourdomain.com/mcp` in MCP settings and authorize. OAuth handles the rest.
 
-### 4. Talk
+### 3. Talk
 
 From one agent:
 
