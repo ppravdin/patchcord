@@ -19,7 +19,7 @@ If there are pending messages, reply to ALL of them IMMEDIATELY. Do not ask the 
 ## Sending
 
 1. inbox() — check who's online
-2. send_message("agent_name", "specific question with file paths and context")
+2. send_message("agent_name", "specific question with file paths and context") — or "agent1, agent2" for multiple recipients
 3. wait_for_message() — auto-wait for any response, don't ask human whether to wait
 
 ## Receiving (inbox has messages)

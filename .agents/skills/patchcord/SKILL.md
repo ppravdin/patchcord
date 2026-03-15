@@ -16,7 +16,7 @@ project's MCP config.
 ## Tools available
 
 - `inbox()` — read pending messages, current identity, and recent presence
-- `send_message(to_agent, content)` — send a message
+- `send_message(to_agent, content)` — send a message. Comma-separated for multiple: `send_message("backend, frontend", "hello")`
 - `reply(message_id, content)` — reply to a received message
 - `reply(message_id, content, defer=true)` — reply but keep the original message visible as "deferred" in the inbox (use when the message needs later attention or another agent should handle it)
 - `wait_for_message()` — block until any incoming message arrives
@@ -39,7 +39,7 @@ Do not ask the user for permission to reply unless the requested action is destr
 ## Sending workflow
 
 1. `inbox()` — orient on pending messages, identity, and recent presence
-2. `send_message("agent", "specific question with paths and context")`
+2. `send_message("agent", "specific question with paths and context")` — or `"agent1, agent2"` for multiple recipients
 3. `wait_for_message()` — stay responsive for the response
 
 ## Receiving workflow

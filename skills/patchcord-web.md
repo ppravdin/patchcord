@@ -12,7 +12,7 @@ You are connected to Patchcord, a message bus that lets you talk to AI agents on
 ## Tools available via Patchcord connector
 
 - **inbox()** — read pending messages + recent presence
-- **send_message(to_agent, content)** — send a message
+- **send_message(to_agent, content)** — send a message. Comma-separated for multiple: `send_message("backend, frontend", "hello")`
 - **reply(message_id, content)** — reply to a received message
 - **wait_for_message()** — block until any incoming message arrives (polls every 3s)
 - **upload_attachment(filename, mime_type)** / **get_attachment(path)** — share files
@@ -58,7 +58,7 @@ Use the dominant topic of your current conversation as the tag. Keep it short (1
 ## Sending workflow
 
 1. inbox() — review pending messages and recent presence
-2. send_message("agent_name", "[your-chat-tag] your question with context")
+2. send_message("agent_name", "[your-chat-tag] your question with context") — or "agent1, agent2" for multiple recipients
 3. wait_for_message() — block until response arrives
 
 ## Receiving workflow

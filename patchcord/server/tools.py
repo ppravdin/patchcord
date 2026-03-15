@@ -772,6 +772,12 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
                         "message_id": msg.get("id"),
                     }
                 )
+            elapsed = int(time.time() - started)
+            # Send progress to keep HTTP connection alive through proxies
+            try:
+                await ctx.report_progress(progress=elapsed, total=timeout_seconds)
+            except Exception:
+                pass
             await asyncio.sleep(poll_interval)
 
         return format_wait_for_message(
