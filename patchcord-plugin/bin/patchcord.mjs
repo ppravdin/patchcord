@@ -109,21 +109,58 @@ if (!cmd || cmd === "install" || cmd === "agent") {
   }
 
   // Cursor
-  const cursorSkillDir = join(process.env.HOME || "", ".cursor", "skills-cursor", "patchcord");
   const cursorSkillsRoot = join(process.env.HOME || "", ".cursor", "skills-cursor");
-  if (existsSync(cursorSkillsRoot) && !existsSync(cursorSkillDir)) {
-    mkdirSync(cursorSkillDir, { recursive: true });
-    cpSync(join(pluginRoot, "skills", "inbox", "SKILL.md"), join(cursorSkillDir, "SKILL.md"));
-    globalChanges.push("Cursor skill installed");
+  if (existsSync(cursorSkillsRoot)) {
+    const cursorSkillDir = join(cursorSkillsRoot, "patchcord");
+    const cursorWaitDir = join(cursorSkillsRoot, "patchcord-wait");
+    let cursorChanged = false;
+    if (!existsSync(cursorSkillDir)) {
+      mkdirSync(cursorSkillDir, { recursive: true });
+      cpSync(join(pluginRoot, "skills", "inbox", "SKILL.md"), join(cursorSkillDir, "SKILL.md"));
+      cursorChanged = true;
+    }
+    if (!existsSync(cursorWaitDir)) {
+      mkdirSync(cursorWaitDir, { recursive: true });
+      cpSync(join(pluginRoot, "skills", "wait", "SKILL.md"), join(cursorWaitDir, "SKILL.md"));
+      cursorChanged = true;
+    }
+    if (cursorChanged) globalChanges.push("Cursor skills installed");
   }
 
   // Windsurf
-  const windsurfSkillDir = join(process.env.HOME || "", ".codeium", "windsurf", "skills", "patchcord");
-  const windsurfSkillsRoot = join(process.env.HOME || "", ".codeium", "windsurf", "skills");
-  if (existsSync(join(process.env.HOME || "", ".codeium", "windsurf")) && !existsSync(windsurfSkillDir)) {
-    mkdirSync(windsurfSkillDir, { recursive: true });
-    cpSync(join(pluginRoot, "skills", "inbox", "SKILL.md"), join(windsurfSkillDir, "SKILL.md"));
-    globalChanges.push("Windsurf skill installed");
+  if (existsSync(join(process.env.HOME || "", ".codeium", "windsurf"))) {
+    const windsurfSkillDir = join(process.env.HOME || "", ".codeium", "windsurf", "skills", "patchcord");
+    const windsurfWaitDir = join(process.env.HOME || "", ".codeium", "windsurf", "skills", "patchcord-wait");
+    let windsurfChanged = false;
+    if (!existsSync(windsurfSkillDir)) {
+      mkdirSync(windsurfSkillDir, { recursive: true });
+      cpSync(join(pluginRoot, "skills", "inbox", "SKILL.md"), join(windsurfSkillDir, "SKILL.md"));
+      windsurfChanged = true;
+    }
+    if (!existsSync(windsurfWaitDir)) {
+      mkdirSync(windsurfWaitDir, { recursive: true });
+      cpSync(join(pluginRoot, "skills", "wait", "SKILL.md"), join(windsurfWaitDir, "SKILL.md"));
+      windsurfChanged = true;
+    }
+    if (windsurfChanged) globalChanges.push("Windsurf skills installed");
+  }
+
+  // Gemini CLI
+  if (existsSync(join(process.env.HOME || "", ".gemini"))) {
+    const geminiSkillDir = join(process.env.HOME || "", ".gemini", "skills", "patchcord");
+    const geminiWaitDir = join(process.env.HOME || "", ".gemini", "skills", "patchcord-wait");
+    let geminiChanged = false;
+    if (!existsSync(geminiSkillDir)) {
+      mkdirSync(geminiSkillDir, { recursive: true });
+      cpSync(join(pluginRoot, "skills", "inbox", "SKILL.md"), join(geminiSkillDir, "SKILL.md"));
+      geminiChanged = true;
+    }
+    if (!existsSync(geminiWaitDir)) {
+      mkdirSync(geminiWaitDir, { recursive: true });
+      cpSync(join(pluginRoot, "skills", "wait", "SKILL.md"), join(geminiWaitDir, "SKILL.md"));
+      geminiChanged = true;
+    }
+    if (geminiChanged) globalChanges.push("Gemini CLI skills installed");
   }
 
   // Codex CLI
@@ -160,21 +197,24 @@ if (!cmd || cmd === "install" || cmd === "agent") {
   console.log(`  ${cyan}1.${r} Claude Code`);
   console.log(`  ${cyan}2.${r} Codex CLI`);
   console.log(`  ${cyan}3.${r} Cursor`);
-  console.log(`  ${cyan}4.${r} Windsurf\n`);
+  console.log(`  ${cyan}4.${r} Windsurf`);
+  console.log(`  ${cyan}5.${r} Gemini CLI\n`);
 
-  const choice = (await ask(`${dim}Choose (1/2/3/4):${r} `)).trim();
+  const choice = (await ask(`${dim}Choose (1/2/3/4/5):${r} `)).trim();
   const isCodex = choice === "2";
   const isCursor = choice === "3";
   const isWindsurf = choice === "4";
+  const isGemini = choice === "5";
 
-  if (!["1", "2", "3", "4"].includes(choice)) {
+  if (!["1", "2", "3", "4", "5"].includes(choice)) {
     console.error("Invalid choice.");
     rl.close();
     process.exit(1);
   }
 
-  if (isWindsurf) {
-    console.log(`\n  ${yellow}Note: Windsurf uses global config — applies to all projects.${r}`);
+  if (isWindsurf || isGemini) {
+    const toolLabel = isWindsurf ? "Windsurf" : "Gemini CLI";
+    console.log(`\n  ${yellow}Note: ${toolLabel} uses global config — applies to all projects.${r}`);
   } else {
     console.log(`\n${dim}Project folder:${r} ${bold}${cwd}${r}`);
     console.log(`${dim}Config will be created here. Run this in your project folder.${r}`);
@@ -187,13 +227,12 @@ if (!cmd || cmd === "install" || cmd === "agent") {
 
 
   // Check if already configured
-  if (!isCodex) {
+  if (choice === "1") {
     const mcpPath = join(cwd, ".mcp.json");
     if (existsSync(mcpPath)) {
       try {
         const existing = JSON.parse(readFileSync(mcpPath, "utf-8"));
         if (existing.mcpServers?.patchcord) {
-          const existingToken = existing.mcpServers.patchcord.headers?.Authorization || "";
           console.log(`\n  ${yellow}⚠ Claude Code already configured in this project${r}`);
           console.log(`  ${dim}${mcpPath}${r}`);
           const replace = (await ask(`  ${dim}Replace? (y/N):${r} `)).trim().toLowerCase();
@@ -236,7 +275,6 @@ if (!cmd || cmd === "install" || cmd === "agent") {
       } catch {}
     }
   } else if (isWindsurf) {
-    // Windsurf is global only
     const wsPath = join(process.env.HOME || "", ".codeium", "windsurf", "mcp_config.json");
     if (existsSync(wsPath)) {
       try {
@@ -254,7 +292,24 @@ if (!cmd || cmd === "install" || cmd === "agent") {
         }
       } catch {}
     }
-  } else {
+  } else if (isGemini) {
+    const geminiPath = join(process.env.HOME || "", ".gemini", "settings.json");
+    if (existsSync(geminiPath)) {
+      try {
+        const existing = JSON.parse(readFileSync(geminiPath, "utf-8"));
+        if (existing.mcpServers?.patchcord) {
+          console.log(`\n  ${yellow}⚠ Gemini CLI already configured${r}`);
+          console.log(`  ${dim}${geminiPath}${r}`);
+          const replace = (await ask(`  ${dim}Replace? (y/N):${r} `)).trim().toLowerCase();
+          if (replace !== "y" && replace !== "yes") {
+            console.log("Keeping existing config.");
+            rl.close();
+            process.exit(0);
+          }
+        }
+      } catch {}
+    }
+  } else if (isCodex) {
     const configPath = join(cwd, ".codex", "config.toml");
     if (existsSync(configPath)) {
       const content = readFileSync(configPath, "utf-8");
@@ -391,11 +446,41 @@ if (!cmd || cmd === "install" || cmd === "agent") {
       mkdirSync(join(process.env.HOME || "", ".codeium", "windsurf"), { recursive: true });
       writeFileSync(wsPath, JSON.stringify(wsConfig, null, 2) + "\n");
     }
+    // Install workflows as slash commands (.windsurf/workflows/) — per-project
+    const wsWorkflowDir = join(cwd, ".windsurf", "workflows");
+    mkdirSync(wsWorkflowDir, { recursive: true });
+    cpSync(join(pluginRoot, "skills", "inbox", "SKILL.md"), join(wsWorkflowDir, "patchcord.md"));
+    cpSync(join(pluginRoot, "skills", "wait", "SKILL.md"), join(wsWorkflowDir, "patchcord-wait.md"));
     console.log(`\n  ${green}✓${r} Windsurf configured: ${dim}${wsPath}${r}`);
-    console.log(`  ${yellow}Global config — all Windsurf projects share this agent.${r}`);
-    console.log(`  ${dim}Windsurf does not support per-project MCP configs.${r}`);
+    console.log(`  ${green}✓${r} Workflows installed: ${dim}/patchcord${r}, ${dim}/patchcord-wait${r}`);
+    console.log(`  ${yellow}MCP config is global — all Windsurf projects share this agent.${r}`);
+  } else if (isGemini) {
+    // Gemini CLI: global only (~/.gemini/settings.json)
+    const geminiPath = join(process.env.HOME || "", ".gemini", "settings.json");
+    let geminiSettings = {};
+    if (existsSync(geminiPath)) {
+      try {
+        geminiSettings = JSON.parse(readFileSync(geminiPath, "utf-8"));
+      } catch {}
+    }
+    if (!geminiSettings.mcpServers) geminiSettings.mcpServers = {};
+    geminiSettings.mcpServers.patchcord = {
+      httpUrl: `${serverUrl}/mcp`,
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    };
+    // Clean up deprecated tools.allowed if present (removed in Gemini CLI 1.0)
+    if (geminiSettings.tools?.allowed) {
+      geminiSettings.tools.allowed = geminiSettings.tools.allowed.filter(t => !t.startsWith("mcp_patchcord_"));
+      if (geminiSettings.tools.allowed.length === 0) delete geminiSettings.tools;
+    }
+    mkdirSync(join(process.env.HOME || "", ".gemini"), { recursive: true });
+    writeFileSync(geminiPath, JSON.stringify(geminiSettings, null, 2) + "\n");
+    console.log(`\n  ${green}✓${r} Gemini CLI configured: ${dim}${geminiPath}${r}`);
+    console.log(`  ${yellow}Global config — all Gemini CLI projects share this agent.${r}`);
   } else if (isCodex) {
-    // Codex: copy skill + write config
+    // Codex: copy skill + write config + install slash commands
     const dest = join(cwd, ".agents", "skills", "patchcord");
     mkdirSync(dest, { recursive: true });
     cpSync(join(pluginRoot, "skills", "inbox", "SKILL.md"), join(dest, "SKILL.md"));
@@ -408,8 +493,13 @@ if (!cmd || cmd === "install" || cmd === "agent") {
       existing = existing.trimEnd() + `\n\n[mcp_servers.patchcord]\nurl = "${serverUrl}/mcp/bearer"\nhttp_headers = { "Authorization" = "Bearer ${token}", "X-Patchcord-Client-Type" = "codex" }\n`;
       writeFileSync(configPath, existing);
     }
+    // Slash commands (.codex/prompts/)
+    const codexPromptsDir = join(codexDir, "prompts");
+    mkdirSync(codexPromptsDir, { recursive: true });
+    cpSync(join(pluginRoot, "skills", "inbox", "SKILL.md"), join(codexPromptsDir, "patchcord.md"));
+    cpSync(join(pluginRoot, "skills", "wait", "SKILL.md"), join(codexPromptsDir, "patchcord-wait.md"));
     console.log(`\n  ${green}✓${r} Codex configured: ${dim}${configPath}${r}`);
-    console.log(`  ${green}✓${r} Skill installed`);
+    console.log(`  ${green}✓${r} Slash commands: ${dim}/patchcord${r}, ${dim}/patchcord-wait${r}`);
   } else {
     // Claude Code: write .mcp.json
     const mcpPath = join(cwd, ".mcp.json");
@@ -440,7 +530,7 @@ if (!cmd || cmd === "install" || cmd === "agent") {
     console.log(`\n  ${green}✓${r} Claude Code configured: ${dim}${mcpPath}${r}`);
   }
 
-  const toolName = isWindsurf ? "Windsurf" : isCursor ? "Cursor" : isCodex ? "Codex" : "Claude Code";
+  const toolName = isGemini ? "Gemini CLI" : isWindsurf ? "Windsurf" : isCursor ? "Cursor" : isCodex ? "Codex" : "Claude Code";
   console.log(`\n${dim}Restart your ${toolName} session, then run:${r} ${bold}inbox()${r}`);
   process.exit(0);
 }

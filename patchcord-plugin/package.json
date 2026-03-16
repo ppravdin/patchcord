@@ -1,6 +1,6 @@
 {
   "name": "patchcord",
-  "version": "0.3.28",
+  "version": "0.3.34",
   "description": "Cross-machine agent messaging for Claude Code and Codex",
   "author": "ppravdin",
   "license": "MIT",

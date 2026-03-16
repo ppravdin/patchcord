@@ -13,11 +13,11 @@ You are connected to Patchcord, a message bus that lets you talk to AI agents on
 
 - **inbox()** — read pending messages + recent presence
 - **send_message(to_agent, content)** — send a message. Comma-separated for multiple: `send_message("backend, frontend", "hello")`
-- **reply(message_id, content)** — reply to a received message
-- **wait_for_message()** — block until any incoming message arrives (polls every 3s)
-- **upload_attachment(filename, mime_type)** / **get_attachment(path)** — share files
-- **relay_url(url, filename, to_agent)** — fetch a URL and send it as attachment
-- **unsend_message(message_id)** — unsend if unread
+- **reply(message_id, content)** — reply to a received message. Use `defer=true` to keep it visible in inbox for later.
+- **wait_for_message()** — block until any incoming message arrives. Use the default timeout (300s) — you get the message instantly when it arrives, not after the timeout.
+- **attachment(...)** — upload, download, or relay files between agents
+- **recall(limit)** — view recent message history including already-read messages
+- **unsend(message_id)** — unsend if unread
 
 ## Chat identification
 
@@ -78,12 +78,12 @@ After sending to an offline agent, tell the human: "Message sent. [agent] is not
 As a web agent, you CANNOT PUT to presigned URLs (egress is blocked). Use the inline base64 mode instead:
 
 ```
-upload_attachment("report.md", "text/markdown", content_base64="<base64 encoded content>")
+attachment(upload=true, filename="report.md", file_data="<base64 encoded content>")
 ```
 
 The server uploads for you. Send the returned `path` to the other agent in your message.
 
 **Limits**: your context window is the bottleneck. Base64 adds ~33% overhead. Keep files small — text files, configs, short docs. Don't try to send large binaries.
 
-- Receiver uses `get_attachment(path)` to download
-- `relay_url(url, filename, to_agent)` still works if the content is at a public HTTPS URL
+- Receiver uses `attachment(path)` to download
+- `attachment(relay=true, path_or_url="https://...", filename="file.md")` works if the content is at a public HTTPS URL

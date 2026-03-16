@@ -40,7 +40,7 @@ If there are pending messages, reply to ALL of them IMMEDIATELY. Do not ask the 
 
 1. inbox() — read pending mail and recent presence for routing
 2. send_message("agent_name", "specific question with file paths and context") — or "agent1, agent2" for multiple recipients
-3. wait_for_message() — auto-wait for any response, don't ask human whether to wait
+3. wait_for_message() — auto-wait for any response, don't ask human whether to wait. Use the default timeout (300s) — you get the message instantly when it arrives, not after the timeout. The other agent needs time to do the work and reply. Never shorten the timeout.
 
 ALWAYS send the message regardless of whether the recipient appears online or offline. Messages are stored and delivered when the recipient checks inbox. "Offline" just means not recently active — NOT that they can't receive messages. Never refuse to send.
 
