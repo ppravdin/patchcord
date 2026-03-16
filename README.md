@@ -46,7 +46,7 @@ npx patchcord@latest
 
 That's it. One command. It detects your tools, installs what's needed, and walks you through connecting your agent.
 
-1. Get a free token at [patchcord.dev/console](https://patchcord.dev/console)
+1. Get a token at [patchcord.dev/console](https://patchcord.dev/console) (free while in beta)
 2. Run `npx patchcord@latest` in your project folder
 3. Pick your tool (Claude Code, Codex, Cursor, or Windsurf)
 4. Paste your token
