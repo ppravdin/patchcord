@@ -4,9 +4,6 @@
 # Default: shows only patchcord identity + inbox count.
 # With --full: also shows model, context%, repo (branch).
 #
-# --full mode model/context/git display based on claude-statusline by Kamran Ahmed
-# https://github.com/kamranahmedse/claude-statusline (MIT)
-#
 # Receives session JSON on stdin, outputs ANSI-formatted text.
 set -f
 
@@ -126,36 +123,8 @@ if [ -n "$pc_url" ] && [ -n "$pc_token" ]; then
     fi
 fi
 
-# ── Update check (once per 24h) ───────────────────────
-update_part=""
-plugin_json="${CLAUDE_PLUGIN_ROOT:-.}/.claude-plugin/plugin.json"
-if [ -f "$plugin_json" ]; then
-    installed_ver=$(jq -r '.version // ""' "$plugin_json" 2>/dev/null)
-    if [ -n "$installed_ver" ]; then
-        update_cache="/tmp/claude/patchcord-update-check.json"
-        mkdir -p /tmp/claude
-        update_stale=true
-        if [ -f "$update_cache" ]; then
-            uc_mtime=$(stat -c %Y "$update_cache" 2>/dev/null || stat -f %m "$update_cache" 2>/dev/null)
-            uc_now=$(date +%s)
-            [ $(( uc_now - uc_mtime )) -lt 86400 ] && update_stale=false
-        fi
-        if $update_stale; then
-            latest=$(npm view patchcord version --json 2>/dev/null | tr -d '"' || true)
-            if [ -n "$latest" ]; then
-                echo "{\"latest\":\"$latest\"}" > "$update_cache"
-            fi
-        else
-            latest=$(jq -r '.latest // ""' "$update_cache" 2>/dev/null)
-        fi
-        if [ -n "$latest" ] && [ "$latest" != "$installed_ver" ]; then
-            update_part="${yellow}⬆ ${latest} (npm update -g patchcord)${reset}"
-        fi
-    fi
-fi
-
 # No patchcord config — output nothing in default mode
-if [ -z "$pc_part" ] && [ -z "$update_part" ] && ! $FULL; then
+if [ -z "$pc_part" ] && ! $FULL; then
     exit 0
 fi
 
@@ -204,18 +173,8 @@ if $FULL; then
         line+="${sep}"
         line+="${pc_part}"
     fi
-    if [ -n "$update_part" ]; then
-        line+="${sep}"
-        line+="${update_part}"
-    fi
 else
     line="${pc_part}"
-    if [ -n "$update_part" ]; then
-        if [ -n "$line" ]; then
-            line+="${sep}"
-        fi
-        line+="${update_part}"
-    fi
 fi
 
 # ── Output ──────────────────────────────────────────────

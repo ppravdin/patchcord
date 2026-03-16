@@ -449,6 +449,15 @@ class RateLimitMiddleware:
 
 _cleanup_task: asyncio.Task[None] | None = None
 
+# Graceful shutdown: when SIGTERM arrives (docker stop), set this flag so
+# all wait_for_message loops exit immediately with a clean response.
+# Clients retry on the new container.
+_shutting_down = False
+
+
+def is_shutting_down() -> bool:
+    return _shutting_down
+
 
 def main() -> None:
     import uvicorn
@@ -526,8 +535,17 @@ def main() -> None:
     starlette_app = RateLimitMiddleware(BearerPathMiddleware(CSPMiddleware(starlette_app)))
 
     async def serve() -> None:
-        global _cleanup_task
+        import signal
+
+        global _cleanup_task, _shutting_down
         _cleanup_task = asyncio.create_task(_periodic_cleanup())
+
+        def _handle_sigterm(*_args):
+            global _shutting_down
+            _shutting_down = True
+            print("SIGTERM received — draining wait_for_message loops", file=__import__("sys").stderr)
+
+        signal.signal(signal.SIGTERM, _handle_sigterm)
 
         config = uvicorn.Config(
             starlette_app,
@@ -536,6 +554,7 @@ def main() -> None:
             log_level=mcp.settings.log_level.lower(),
             proxy_headers=True,
             forwarded_allow_ips="*",
+            timeout_graceful_shutdown=10,
         )
         server = uvicorn.Server(config)
         await server.serve()

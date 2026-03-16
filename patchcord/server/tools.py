@@ -26,8 +26,8 @@ from patchcord.core import (
     err,
     format_get_attachment,
     format_inbox,
-    format_list_recent_debug,
     format_recall,
+    format_recall_history,
     format_relay_url,
     format_reply,
     format_send,
@@ -69,7 +69,6 @@ from patchcord.server.helpers import (
     _resolve_target_agent,
     _storage_request,
     _touch_presence,
-    get_user_namespace_ids,
     http_client,
     namespace_ids_match,
     ssrf_safe_client,
@@ -79,12 +78,23 @@ from patchcord.server.helpers import (
 _log = logging.getLogger("patchcord.server.tools")
 
 
+async def _scoped_namespace_ids(namespace_id: str, ctx: Context) -> list[str]:
+    """Return namespace list scoped by auth type.
+
+    OAuth agents (claude.ai, chatgpt) see all of the user's namespaces.
+    Token agents (Claude Code, Cursor, etc.) see only their own namespace.
+    """
+    if _is_oauth_agent(ctx):
+        return await _scoped_namespace_ids(namespace_id, ctx)
+    return [namespace_id]
+
+
 def register(mcp):  # noqa: C901 — registering all tools in one function
     """Register all MCP tools on the given FastMCP server instance."""
 
     @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=True))
     async def send_message(to_agent: str, content: str, ctx: Context) -> str:
-        """Send a message to another agent. Supports agent@namespace for cross-namespace targeting."""
+        """Send a message to an agent. Use commas for multiple recipients. Messages support up to 50,000 characters — send full content, specifications, and code as-is. Never summarize or truncate when sending."""
         try:
             namespace_id, agent_id_val = _get_current_identity(ctx)
         except Exception:
@@ -92,38 +102,44 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
 
         await _touch_presence(namespace_id, agent_id_val, ctx)
 
-        to_agent = clean(to_agent)
         content = clean(content)
-        if not to_agent:
-            return err("to_agent is required")
-
-        # Parse agent@namespace before validation
-        if "@" in to_agent:
-            agent_part, ns_part = to_agent.rsplit("@", 1)
-            agent_part = agent_part.strip()
-            ns_part = ns_part.strip()
-            if not agent_part or not ns_part:
-                return err("invalid agent@namespace format")
-            if not valid_agent_id(agent_part):
-                return err("invalid to_agent format")
-        else:
-            if not valid_agent_id(to_agent):
-                return err("invalid to_agent format")
-
         if not content:
             return err("content is required")
         if len(content) > MAX_CONTENT_LENGTH:
             return err(f"content exceeds {MAX_CONTENT_LENGTH} characters")
 
-        # Resolve target within user's namespaces
-        is_oauth = _is_oauth_agent(ctx)
-        try:
-            target_ns, to_agent_resolved = await _resolve_target_agent(namespace_id, to_agent, is_oauth)
-        except ValueError as exc:
-            return err(str(exc))
+        # Parse comma-separated recipients (dedup, preserve order)
+        raw_recipients = [r.strip() for r in to_agent.split(",") if r.strip()]
+        if not raw_recipients:
+            return err("to_agent is required")
+
+        # Dedup while preserving order
+        seen: set[str] = set()
+        recipients: list[str] = []
+        for r in raw_recipients:
+            r_clean = clean(r)
+            if r_clean and r_clean not in seen:
+                seen.add(r_clean)
+                recipients.append(r_clean)
+
+        if not recipients:
+            return err("to_agent is required")
+
+        # Validate all recipient formats
+        for r in recipients:
+            if "@" in r:
+                agent_part, ns_part = r.rsplit("@", 1)
+                if not agent_part.strip() or not ns_part.strip():
+                    return err(f"invalid agent@namespace format: {r}")
+                if not valid_agent_id(agent_part.strip()):
+                    return err(f"invalid to_agent format: {r}")
+            else:
+                if not valid_agent_id(r):
+                    return err(f"invalid to_agent format: {r}")
 
         # Pre-send inbox guard — scoped to user's namespaces
-        user_ns = await get_user_namespace_ids(namespace_id)
+        is_oauth = _is_oauth_agent(ctx)
+        user_ns = await _scoped_namespace_ids(namespace_id, ctx)
         guard_params: dict[str, str] = {
             "to_agent": f"eq.{agent_id_val}",
             "status": f"eq.{STATUS_PENDING}",
@@ -155,14 +171,90 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
                 }
             )
 
-        # Recipient presence check (in target namespace)
+        # Single recipient — original path (no group_id, backward compatible)
+        if len(recipients) == 1:
+            return await _send_single(
+                namespace_id,
+                agent_id_val,
+                recipients[0],
+                content,
+                is_oauth,
+                ctx,
+            )
+
+        # Multi-recipient — fan-out with shared group_id
+        import uuid
+
+        group_id = str(uuid.uuid4())
+        recipient_tags = [clean(r) for r in recipients]
+        results: list[dict[str, Any]] = []
+        sent_count = 0
+        fail_count = 0
+
+        for recipient in recipients:
+            try:
+                target_ns, to_agent_resolved = await _resolve_target_agent(namespace_id, recipient, is_oauth)
+                result = await _post_message(
+                    {
+                        "namespace_id": target_ns,
+                        "from_agent": agent_id_val,
+                        "to_agent": to_agent_resolved,
+                        "content": content,
+                        "status": STATUS_PENDING,
+                        "group_id": group_id,
+                        "recipients": recipient_tags,
+                    }
+                )
+                results.append(
+                    {
+                        "to": to_agent_resolved,
+                        "to_tag": agent_tag(target_ns, to_agent_resolved),
+                        "message_id": result.get("id", "unknown"),
+                        "status": "sent",
+                    }
+                )
+                sent_count += 1
+            except Exception as exc:
+                results.append(
+                    {
+                        "to": recipient,
+                        "status": "failed",
+                        "error": str(exc)[:200],
+                    }
+                )
+                fail_count += 1
+
+        payload: dict[str, Any] = {
+            "status": "sent" if fail_count == 0 else "partial" if sent_count > 0 else "failed",
+            "sent_count": sent_count,
+            "failed_count": fail_count,
+            "group_id": group_id,
+            "recipients": results,
+        }
+        return format_send(payload)
+
+    async def _send_single(
+        namespace_id: str,
+        agent_id_val: str,
+        to_agent: str,
+        content: str,
+        is_oauth: bool,
+        ctx: Context,
+    ) -> str:
+        """Send a single message (original path, no group_id)."""
+        try:
+            target_ns, to_agent_resolved = await _resolve_target_agent(namespace_id, to_agent, is_oauth)
+        except ValueError as exc:
+            return err(str(exc))
+
+        from patchcord.server import helpers
+
+        # Recipient presence check
         recipient_online: bool | None = None
         recipient_machine: str | None = None
         recipient_last_seen: str | None = None
         recipient_client_type: str | None = None
         recipient_platform: str | None = None
-
-        from patchcord.server import helpers
 
         if not helpers.is_registry_disabled():
             try:
@@ -226,12 +318,7 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
 
     @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=True))
     async def reply(message_id: str, content: str, defer: bool = False, ctx: Context | None = None) -> str:
-        """Reply to a message addressed to your authenticated agent.
-
-        Set defer=true to send the reply but keep the original message in your
-        inbox as "deferred." Deferred messages persist across sessions and show
-        in a separate inbox section. Reply again without defer to resolve it.
-        """
+        """Reply to a message in your inbox. Set defer=true when you receive a request but are busy with another task — the message stays visible in your inbox so you don't forget to handle it later. Deferred messages persist across sessions and appear in every future inbox() call until you reply again without defer."""
         if ctx is None:
             return err("Context missing")
         try:
@@ -268,7 +355,7 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
             )
         # Namespace check: must be within the same user's namespaces
         orig_ns = original.get("namespace_id", "default")
-        user_ns = await get_user_namespace_ids(namespace_id)
+        user_ns = await _scoped_namespace_ids(namespace_id, ctx)
         if not namespace_ids_match(orig_ns, user_ns):
             return err(
                 "Cannot reply to a message from a different namespace",
@@ -306,8 +393,8 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
         )
 
     @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, openWorldHint=False))
-    async def unsend_message(message_id: str, ctx: Context) -> str:
-        """Unsend a message you sent, if the recipient has not read it yet."""
+    async def unsend(message_id: str, ctx: Context) -> str:
+        """Take back a message before the recipient reads it."""
         try:
             namespace_id, agent_id_val = _get_current_identity(ctx)
         except Exception:
@@ -333,7 +420,7 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
         if msg.get("from_agent") != agent_id_val:
             return err("Cannot recall a message you did not send", message_id=message_id)
         # Namespace check: must be within the same user's namespaces
-        user_ns = await get_user_namespace_ids(namespace_id)
+        user_ns = await _scoped_namespace_ids(namespace_id, ctx)
         if not namespace_ids_match(msg.get("namespace_id", "default"), user_ns):
             return err("Cannot recall a message from a different namespace", message_id=message_id)
 
@@ -359,12 +446,31 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
         )
 
     @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=True))
-    async def upload_attachment(
-        filename: str,
-        mime_type: str = "application/octet-stream",
+    async def attachment(
+        path_or_url: str = "",
+        relay: bool = False,
+        filename: str = "",
+        mime_type: str = "",
+        upload: bool = False,
+        file_data: str = "",
         ctx: Context | None = None,
     ) -> str:
-        """Get a presigned upload URL. Upload the file directly to that URL via PUT — no base64 needed."""
+        """Download: pass a file path to retrieve a shared file. Upload via URL: set upload=true with a filename to get an upload URL. Upload inline: set upload=true with filename and file_data (base64) to upload directly. Relay: set relay=true with a URL to fetch and store an external file."""
+        if relay and path_or_url:
+            return await _relay_url_impl(path_or_url, filename, mime_type or "application/octet-stream", ctx)
+        if upload and filename:
+            return await _upload_impl(filename, mime_type or "application/octet-stream", file_data, ctx)
+        if path_or_url:
+            return await _get_attachment_impl(path_or_url, ctx)
+        return err("Provide path_or_url to download, or set upload=true with filename, or set relay=true with a URL")
+
+    async def _upload_impl(
+        filename: str,
+        mime_type: str = "application/octet-stream",
+        file_data: str = "",
+        ctx: Context | None = None,
+    ) -> str:
+        """Internal: handle upload mode."""
         if ctx is None:
             return err("Context missing")
 
@@ -383,6 +489,39 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
         ns_out, clean_agent_id, object_path = _attachment_storage_path(namespace_id, agent_id_val, filename)
         encoded_path = quote(object_path, safe="/")
 
+        # Inline mode: agents pass file_data (base64), server uploads directly
+        if file_data:
+            file_data = file_data.strip()
+            try:
+                payload = base64.b64decode(file_data, validate=True)
+            except Exception:
+                return err("file_data is not valid base64")
+            if not payload:
+                return err("decoded attachment is empty")
+            if len(payload) > ATTACHMENT_MAX_BYTES:
+                return err("attachment exceeds maximum size", max_bytes=ATTACHMENT_MAX_BYTES, actual_bytes=len(payload))
+            try:
+                await _ensure_attachment_bucket()
+                await _storage_request(
+                    "POST",
+                    f"/object/{ATTACHMENT_BUCKET}/{encoded_path}",
+                    content=payload,
+                    headers={"Content-Type": mime_type, "x-upsert": "false"},
+                    timeout=120,
+                )
+            except Exception as exc:
+                return err("Failed to upload attachment", detail=http_error(exc))
+
+            return format_upload_attachment(
+                {
+                    "status": "uploaded",
+                    "path": object_path,
+                    "mime_type": mime_type,
+                    "size_bytes": len(payload),
+                }
+            )
+
+        # Presigned URL mode: agents upload directly
         try:
             await _ensure_attachment_bucket()
             upload_resp = await _storage_request(
@@ -408,20 +547,13 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
             }
         )
 
-    @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=True))
-    async def relay_url(
+    async def _relay_url_impl(
         url: str,
         filename: str,
-        to_agent: str,
         mime_type: str = "application/octet-stream",
         ctx: Context | None = None,
     ) -> str:
-        """Fetch a URL and relay its content as an attachment to another agent.
-
-        The server downloads the URL, stores it in Supabase Storage, and sends
-        a notification message to to_agent with the attachment path.
-        Useful for web-platform agents that cannot upload directly.
-        """
+        """Internal: fetch a URL and store as attachment."""
         if ctx is None:
             return err("Context missing")
         try:
@@ -433,7 +565,6 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
         # --- Validate inputs ---
         url = clean(url)
         filename = clean(filename)
-        to_agent_clean = clean(to_agent)
         provided_mime = normalize_mime_type(mime_type)
 
         if not url:
@@ -480,47 +611,13 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
         if _ssrf_err:
             return err(_ssrf_err)
         if not filename:
-            return err("filename is required")
-        if not to_agent_clean:
-            return err("to_agent is required")
+            # Derive filename from URL path
+            from urllib.parse import urlparse as _urlparse_fn
 
-        # Resolve target within user's namespaces
-        is_oauth = _is_oauth_agent(ctx)
-        try:
-            target_ns, to_agent_resolved = await _resolve_target_agent(namespace_id, to_agent_clean, is_oauth)
-        except ValueError as exc:
-            return err(str(exc))
-
-        # --- Send gate: block if sender has unread pending messages ---
-        user_ns = await get_user_namespace_ids(namespace_id)
-        guard_params: dict[str, str] = {
-            "to_agent": f"eq.{agent_id_val}",
-            "status": f"eq.{STATUS_PENDING}",
-            "order": "created_at.asc",
-            "limit": str(INBOX_PRECHECK_LIMIT),
-            "namespace_id": user_ns_filter(user_ns),
-        }
-        try:
-            pending_for_guard = await _get_messages(guard_params)
-        except Exception as exc:
-            return err("Failed pre-send inbox check", detail=http_error(exc))
-
-        if pending_for_guard:
-            return format_send(
-                {
-                    "status": "blocked_pending_inbox",
-                    "pending_total": len(pending_for_guard),
-                    "incoming_messages": [
-                        {
-                            "message_id": m.get("id"),
-                            "from": m.get("from_agent"),
-                            "content": m.get("content"),
-                            "sent_at": m.get("created_at"),
-                        }
-                        for m in pending_for_guard[:5]
-                    ],
-                }
-            )
+            _url_path = _urlparse_fn(url).path
+            filename = _url_path.rsplit("/", 1)[-1] if "/" in _url_path else "download"
+            if not filename:
+                filename = "download"
 
         # --- Fetch the URL using SSRF-safe client (validates IPs at connection time) ---
         try:
@@ -592,49 +689,16 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
         except Exception as exc:
             return err(f"Storage upload failed: {exc}")
 
-        # --- Send notification message to target agent ---
-        size_kb = len(content_bytes) / 1024
-        if size_kb >= 1024:
-            size_str = f"{size_kb / 1024:.1f}MB"
-        else:
-            size_str = f"{size_kb:.0f}KB"
-        notify_content = f"[file] {filename} ({size_str}) — shared by {agent_id_val}\nPath: {object_path}"
-        try:
-            msg_result = await _post_message(
-                {
-                    "namespace_id": target_ns,
-                    "from_agent": agent_id_val,
-                    "to_agent": to_agent_resolved,
-                    "content": notify_content,
-                    "status": STATUS_PENDING,
-                }
-            )
-        except Exception as exc:
-            return format_relay_url(
-                {
-                    "status": "relayed",
-                    "path": object_path,
-                    "size": len(content_bytes),
-                    "to_agent": to_agent_resolved,
-                    "message_id": "?",
-                    "warning": f"Uploaded but notification failed: {exc}",
-                }
-            )
-
-        msg_id = msg_result.get("id", "?")
         return format_relay_url(
             {
                 "status": "relayed",
                 "path": object_path,
                 "size": len(content_bytes),
-                "to_agent": to_agent_resolved,
-                "message_id": msg_id,
             }
         )
 
-    @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False))
-    async def get_attachment(path_or_url: str, ctx: Context | None = None) -> str:
-        """Fetch an attachment by storage path or signed URL and return its content."""
+    async def _get_attachment_impl(path_or_url: str, ctx: Context | None = None) -> str:
+        """Internal: fetch an attachment by storage path or signed URL."""
         if ctx is None:
             return err("Context missing")
 
@@ -667,7 +731,7 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
             # Storage paths are namespace/agent_id/timestamp_filename.
             parts = path_or_url.split("/")
             path_ns = parts[0] if len(parts) > 0 else ""
-            user_ns = await get_user_namespace_ids(namespace_id)
+            user_ns = await _scoped_namespace_ids(namespace_id, ctx)
             if not namespace_ids_match(path_ns, user_ns):
                 return err(f"Access denied: path belongs to namespace {path_ns!r}")
             encoded = quote(path_or_url, safe="/")
@@ -721,7 +785,7 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
 
     @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=True))
     async def wait_for_message(timeout_seconds: int = 300, ctx: Context | None = None) -> str:
-        """Poll for any new incoming message. Blocks until a message arrives or timeout. Use after replying to stay responsive."""
+        """Wait for a reply. Use after sending or replying to stay in the conversation. Default wait is 5 minutes — enough for multi-round exchanges."""
         if ctx is None:
             return err("Context missing")
 
@@ -737,19 +801,31 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
         if timeout_seconds > 3600:
             timeout_seconds = 3600
 
-        user_ns = await get_user_namespace_ids(namespace_id)
+        user_ns = await _scoped_namespace_ids(namespace_id, ctx)
 
         started = time.time()
-        poll_interval = 3
+        poll_interval = 5
+        last_presence = 0.0
 
         while time.time() - started < timeout_seconds:
-            await _touch_presence(namespace_id, agent_id_val, ctx)
+            from patchcord.server.app import is_shutting_down
+
+            if is_shutting_down():
+                return format_wait_for_message(
+                    {"status": "timeout", "message": "Server restarting. Call wait_for_message() again."}
+                )
+            # Throttle presence writes to every 30s during long polls
+            now = time.time()
+            if now - last_presence >= 30:
+                await _touch_presence(namespace_id, agent_id_val, ctx)
+                last_presence = now
             try:
                 params: dict[str, str] = {
                     "to_agent": f"eq.{agent_id_val}",
                     "status": f"eq.{STATUS_PENDING}",
                     "order": "created_at.asc",
                     "limit": "1",
+                    "select": "id,from_agent,content,created_at,namespace_id",
                     "namespace_id": user_ns_filter(user_ns),
                 }
                 messages = await _get_messages(params)
@@ -789,13 +865,10 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
 
     @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False))
     async def inbox(
-        active_within_seconds: int = ACTIVE_WINDOW_SECONDS_DEFAULT,
-        agents_limit: int = 50,
-        inbox_limit: int = 100,
-        show_presence: bool = True,
+        all_agents: bool = False,
         ctx: Context | None = None,
     ) -> str:
-        """One-call overview: pending inbox (all unread messages with full content), with optional online agents."""
+        """Get all unread messages and see who's available. Call this first when you connect. Set all_agents=true to include offline agents. Offline agents can still receive messages — ask the human to check their inbox."""
         if ctx is None:
             return err("Context missing")
 
@@ -806,12 +879,12 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
 
         await _touch_presence(namespace_id, agent_id_val, ctx, force=True)
 
-        active_within_seconds = max(10, min(86400, active_within_seconds))
-        agents_limit = max(1, min(200, agents_limit))
-        inbox_limit = max(1, min(500, inbox_limit))
+        active_within_seconds = ACTIVE_WINDOW_SECONDS_DEFAULT
+        agents_limit = 50
+        inbox_limit = 100
+        show_presence = True
 
-        is_oauth = _is_oauth_agent(ctx)
-        user_ns = await get_user_namespace_ids(namespace_id)
+        user_ns = await _scoped_namespace_ids(namespace_id, ctx)
 
         result_data: dict[str, Any] = {
             "status": "ok",
@@ -887,93 +960,93 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
                 rows = await _get_registry(presence_params)
                 active_rows = []
                 for row in rows:
-                    if not presence_is_active(row, active_within_seconds):
+                    is_active = presence_is_active(row, active_within_seconds)
+                    if not is_active and not all_agents:
                         continue
                     row_ns = row.get("namespace_id", namespace_id)
                     row_agent = clean(str(row.get("agent_id", "")))
-                    active_rows.append(
+                    entry = {
+                        "namespace_id": row_ns,
+                        "full_id": f"{row_ns}:{row_agent}",
+                        "agent_id": row.get("agent_id"),
+                        "agent_tag": agent_tag(row_ns, row_agent),
+                        "display_name": row.get("display_name") or row.get("agent_id"),
+                        "machine_name": row.get("machine_name"),
+                        "client_type": meta_value(row, "client_type"),
+                        "platform": meta_value(row, "platform"),
+                        "last_seen": row.get("last_seen"),
+                        "seconds_since_seen": age_seconds(row.get("last_seen")),
+                    }
+                    if all_agents:
+                        entry["online"] = is_active
+                    active_rows.append(entry)
+                # Show cross-namespace counterparties this agent has exchanged messages with.
+                try:
+                    existing_ids = {r.get("agent_id") for r in active_rows}
+                    counterparty_ids: set[str] = set()
+
+                    recv_msgs = await _get_messages(
                         {
-                            "namespace_id": row_ns,
-                            "full_id": f"{row_ns}:{row_agent}",
-                            "agent_id": row.get("agent_id"),
-                            "agent_tag": agent_tag(row_ns, row_agent),
-                            "display_name": row.get("display_name") or row.get("agent_id"),
-                            "machine_name": row.get("machine_name"),
-                            "client_type": meta_value(row, "client_type"),
-                            "platform": meta_value(row, "platform"),
-                            "last_seen": row.get("last_seen"),
-                            "seconds_since_seen": age_seconds(row.get("last_seen")),
+                            "namespace_id": user_ns_filter(user_ns),
+                            "to_agent": f"eq.{agent_id_val}",
+                            "select": "from_agent",
+                            "order": "created_at.desc",
+                            "limit": "50",
                         }
                     )
-                # Counterparty discovery for bearer token agents: show agents from
-                # other namespaces (within the same user) they've exchanged messages with.
-                if not is_oauth:
-                    try:
-                        existing_ids = {r.get("agent_id") for r in active_rows}
-                        counterparty_ids: set[str] = set()
+                    for m in recv_msgs:
+                        fa = m.get("from_agent", "")
+                        if fa and fa != agent_id_val and fa not in existing_ids:
+                            counterparty_ids.add(fa)
 
-                        recv_msgs = await _get_messages(
+                    sent_msgs = await _get_messages(
+                        {
+                            "namespace_id": user_ns_filter(user_ns),
+                            "from_agent": f"eq.{agent_id_val}",
+                            "select": "to_agent",
+                            "order": "created_at.desc",
+                            "limit": "50",
+                        }
+                    )
+                    for m in sent_msgs:
+                        ta = m.get("to_agent", "")
+                        if ta and ta != agent_id_val and ta not in existing_ids:
+                            counterparty_ids.add(ta)
+
+                    if counterparty_ids:
+                        ids_str = ",".join(sorted(counterparty_ids))
+                        cross_rows = await _get_registry(
                             {
+                                "agent_id": f"in.({ids_str})",
                                 "namespace_id": user_ns_filter(user_ns),
-                                "to_agent": f"eq.{agent_id_val}",
-                                "select": "from_agent",
-                                "order": "created_at.desc",
-                                "limit": "50",
+                                "order": "last_seen.desc",
+                                "limit": str(min(len(counterparty_ids) * 2, 50)),
                             }
                         )
-                        for m in recv_msgs:
-                            fa = m.get("from_agent", "")
-                            if fa and fa != agent_id_val and fa not in existing_ids:
-                                counterparty_ids.add(fa)
-
-                        sent_msgs = await _get_messages(
-                            {
-                                "namespace_id": user_ns_filter(user_ns),
-                                "from_agent": f"eq.{agent_id_val}",
-                                "select": "to_agent",
-                                "order": "created_at.desc",
-                                "limit": "50",
-                            }
-                        )
-                        for m in sent_msgs:
-                            ta = m.get("to_agent", "")
-                            if ta and ta != agent_id_val and ta not in existing_ids:
-                                counterparty_ids.add(ta)
-
-                        if counterparty_ids:
-                            ids_str = ",".join(sorted(counterparty_ids))
-                            cross_rows = await _get_registry(
+                        for crow in cross_rows:
+                            if not presence_is_active(crow, active_within_seconds):
+                                continue
+                            crow_ns = crow.get("namespace_id", namespace_id)
+                            crow_agent = clean(str(crow.get("agent_id", "")))
+                            if crow_agent in existing_ids:
+                                continue
+                            existing_ids.add(crow_agent)
+                            active_rows.append(
                                 {
-                                    "agent_id": f"in.({ids_str})",
-                                    "namespace_id": user_ns_filter(user_ns),
-                                    "order": "last_seen.desc",
-                                    "limit": str(min(len(counterparty_ids) * 2, 50)),
+                                    "namespace_id": crow_ns,
+                                    "full_id": f"{crow_ns}:{crow_agent}",
+                                    "agent_id": crow.get("agent_id"),
+                                    "agent_tag": agent_tag(crow_ns, crow_agent),
+                                    "display_name": crow.get("display_name") or crow.get("agent_id"),
+                                    "machine_name": crow.get("machine_name"),
+                                    "client_type": meta_value(crow, "client_type"),
+                                    "platform": meta_value(crow, "platform"),
+                                    "last_seen": crow.get("last_seen"),
+                                    "seconds_since_seen": age_seconds(crow.get("last_seen")),
                                 }
                             )
-                            for crow in cross_rows:
-                                if not presence_is_active(crow, active_within_seconds):
-                                    continue
-                                crow_ns = crow.get("namespace_id", namespace_id)
-                                crow_agent = clean(str(crow.get("agent_id", "")))
-                                if crow_agent in existing_ids:
-                                    continue
-                                existing_ids.add(crow_agent)
-                                active_rows.append(
-                                    {
-                                        "namespace_id": crow_ns,
-                                        "full_id": f"{crow_ns}:{crow_agent}",
-                                        "agent_id": crow.get("agent_id"),
-                                        "agent_tag": agent_tag(crow_ns, crow_agent),
-                                        "display_name": crow.get("display_name") or crow.get("agent_id"),
-                                        "machine_name": crow.get("machine_name"),
-                                        "client_type": meta_value(crow, "client_type"),
-                                        "platform": meta_value(crow, "platform"),
-                                        "last_seen": crow.get("last_seen"),
-                                        "seconds_since_seen": age_seconds(crow.get("last_seen")),
-                                    }
-                                )
-                    except Exception:
-                        _log.debug("cross-namespace discovery failed", exc_info=True)
+                except Exception:
+                    _log.debug("cross-namespace discovery failed", exc_info=True)
 
                 result_data["agents"] = {
                     "active_window_seconds": active_within_seconds,
@@ -988,8 +1061,8 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
         return format_inbox(result_data)
 
     @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False))
-    async def list_recent_debug(limit: int = 10, ctx: Context | None = None) -> str:
-        """Debug only: list recent messages (sent and received, including already-read). Do not call routinely — use inbox() instead."""
+    async def recall(limit: int = 10, from_agent: str = "", ctx: Context | None = None) -> str:
+        """View recent message history, including messages already read."""
         if ctx is None:
             return err("Context missing")
 
@@ -1001,9 +1074,10 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
         await _touch_presence(namespace_id, agent_id_val, ctx)
 
         limit = max(1, min(100, limit))
+        from_agent_clean = clean(from_agent)
 
         # Scoped to user's namespaces
-        user_ns = await get_user_namespace_ids(namespace_id)
+        user_ns = await _scoped_namespace_ids(namespace_id, ctx)
         ns_flt = user_ns_filter(user_ns)
         sent_params: dict[str, str] = {
             "from_agent": f"eq.{agent_id_val}",
@@ -1017,6 +1091,9 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
             "limit": str(limit),
             "namespace_id": ns_flt,
         }
+        if from_agent_clean:
+            sent_params["to_agent"] = f"eq.{from_agent_clean}"
+            recv_params["from_agent"] = f"eq.{from_agent_clean}"
 
         try:
             sent = await _get_messages(sent_params)
@@ -1029,7 +1106,7 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
             deduped[m["id"]] = m
         recent = sorted(deduped.values(), key=lambda x: x["created_at"], reverse=True)[:limit]
 
-        return format_list_recent_debug(
+        return format_recall_history(
             {
                 "messages": [
                     {

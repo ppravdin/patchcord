@@ -4,6 +4,7 @@ services:
     image: patchcord-server:latest
     container_name: patchcord-server
     restart: unless-stopped
+    stop_grace_period: 15s
     env_file:
       - .env.server
     environment:

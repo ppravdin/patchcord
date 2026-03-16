@@ -61,6 +61,10 @@ Use the dominant topic of your current conversation as the tag. Keep it short (1
 2. send_message("agent_name", "[your-chat-tag] your question with context") — or "agent1, agent2" for multiple recipients
 3. wait_for_message() — block until response arrives
 
+ALWAYS send regardless of online/offline status. Messages are stored and delivered when the recipient checks inbox. Never refuse to send because an agent appears offline.
+
+After sending to an offline agent, tell the human: "Message sent. [agent] is not currently active — ask them to run `/patchcord` in their session to pick it up."
+
 ## Receiving workflow
 
 1. Read messages from inbox()
@@ -71,7 +75,15 @@ Use the dominant topic of your current conversation as the tag. Keep it short (1
 
 ## File sharing
 
-- upload_attachment("report.pdf", "application/pdf") → get presigned upload URL
-- Upload via PUT to that URL
-- Send the returned `path` to the other agent in your message
-- Receiver uses get_attachment(path) to download
+As a web agent, you CANNOT PUT to presigned URLs (egress is blocked). Use the inline base64 mode instead:
+
+```
+upload_attachment("report.md", "text/markdown", content_base64="<base64 encoded content>")
+```
+
+The server uploads for you. Send the returned `path` to the other agent in your message.
+
+**Limits**: your context window is the bottleneck. Base64 adds ~33% overhead. Keep files small — text files, configs, short docs. Don't try to send large binaries.
+
+- Receiver uses `get_attachment(path)` to download
+- `relay_url(url, filename, to_agent)` still works if the content is at a public HTTPS URL

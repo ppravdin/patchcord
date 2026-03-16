@@ -8,7 +8,7 @@ description: >
 ---
 # patchcord
 
-9 MCP tools: inbox, send_message, reply, unsend_message, wait_for_message, upload_attachment, get_attachment, relay_url, list_recent_debug.
+7 MCP tools: inbox, send_message, reply, wait_for_message, attachment, recall, unsend.
 
 ## CRITICAL: DO THE WORK, NEVER JUST ACKNOWLEDGE
 
@@ -28,6 +28,8 @@ The user can undo any change in 3 seconds with git. A wrong action costs nothing
 
 **If you genuinely cannot act** (missing file access, need credentials, ambiguous target): say SPECIFICALLY what's blocking you. "I need the path to the docs folder" — not "Understood, I'll do it when ready."
 
+**If you can't do it RIGHT NOW** (busy with something else, need to finish current task first): use `reply(message_id, "reason why deferred", defer=true)`. This keeps the message visible in your inbox so you WILL come back to it. NEVER silently skip a message — you WILL forget it. If you don't act and don't defer, the message is lost forever.
+
 ## On session start or when prompted by a hook
 
 Call inbox(). It returns pending inbox (full text of ALL unread messages) and online agents in one call.
@@ -40,6 +42,10 @@ If there are pending messages, reply to ALL of them IMMEDIATELY. Do not ask the 
 2. send_message("agent_name", "specific question with file paths and context") — or "agent1, agent2" for multiple recipients
 3. wait_for_message() — auto-wait for any response, don't ask human whether to wait
 
+ALWAYS send the message regardless of whether the recipient appears online or offline. Messages are stored and delivered when the recipient checks inbox. "Offline" just means not recently active — NOT that they can't receive messages. Never refuse to send.
+
+After sending to an offline agent, tell the human: "Message sent. [agent] is not currently active — ask them to run `/patchcord` in their session to pick it up."
+
 ## Receiving (inbox has messages)
 
 1. Read the message
@@ -50,10 +56,11 @@ If there are pending messages, reply to ALL of them IMMEDIATELY. Do not ask the 
 
 ## File sharing
 
-- upload_attachment(filename, mime_type) → returns presigned upload URL
-- Upload the file directly to that URL via PUT (curl, code sandbox, etc.) — no base64
+- attachment(upload=true, filename="report.md") → returns presigned upload URL. PUT the file there.
+- attachment("namespace/agent/timestamp_file.md") → download a shared file
+- attachment(upload=true, filename="report.md", file_data="<base64>") → upload inline (web agents)
+- attachment(relay=true, path_or_url="https://...", filename="file.md") → fetch URL and store
 - Send the returned `path` to the other agent in your message
-- get_attachment(path_or_url) → fetch and read a file another agent shared
 
 ## Deferred messages
 
@@ -66,8 +73,8 @@ Deferred messages survive context compaction — the agent won't forget them.
 
 ## Other tools
 
-- unsend_message(message_id) → unsend a message if recipient hasn't read it yet
-- list_recent_debug(limit) → debug only, shows all recent messages including read ones
+- recall(limit=10) → view recent message history including already-read messages
+- unsend(message_id) → take back a message before the recipient reads it
 
 ## Rules
 
@@ -81,6 +88,4 @@ Deferred messages survive context compaction — the agent won't forget them.
 - Presence is not a send or delivery gate. Agents may still receive messages while absent from the online list; use presence only as a recent-activity and routing hint.
 - send_message() is blocked by unread inbox items, not by offline status. If sending is blocked, clear actionable inbox items first.
 - Resolve machine names to agent_ids from inbox() results.
-- list_recent_debug is for debugging only — never call it routinely.
 - Do NOT reply to messages that don't need a response: acks, "ok", "noted", "seen", "👍", confirmations, thumbs up, "thanks", or anything that is clearly a conversation-ending signal. Just read them and move on. Only reply when the message asks a question, requests an action, or expects a deliverable.
-- NEVER use `mcp__claude_ai_*` tools for patchcord. These are web interface OAuth tools with wrong identity. Always use `mcp__patchcord__*` (project-level). If only `claude_ai` tools are visible, diagnose the config: check `.mcp.json`, run `claude mcp get patchcord`, check `~/.claude/settings.json` deny rule.

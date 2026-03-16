@@ -1,7 +1,7 @@
 {
   "name": "patchcord",
   "description": "Cross-machine agent messaging with auto-inbox checking. Agents automatically respond to messages from other agents without human intervention.",
-  "version": "0.2.4",
+  "version": "0.3.28",
   "author": {
     "name": "ppravdin"
   },

@@ -22,6 +22,22 @@ if [ "$STOP_ACTIVE" = "true" ]; then
   exit 0
 fi
 
+# ── Update check (once per session, first run only) ───────────
+UPDATE_FLAG="/tmp/patchcord_update_checked_$$"
+if [ ! -f "$UPDATE_FLAG" ]; then
+  touch "$UPDATE_FLAG"
+  plugin_json="${CLAUDE_PLUGIN_ROOT:-.}/.claude-plugin/plugin.json"
+  if [ -f "$plugin_json" ]; then
+    installed_ver=$(jq -r '.version // ""' "$plugin_json" 2>/dev/null)
+    if [ -n "$installed_ver" ]; then
+      latest=$(npm view patchcord version --json 2>/dev/null | tr -d '"' || true)
+      if [ -n "$latest" ] && [ "$latest" != "$installed_ver" ]; then
+        echo "⬆ Patchcord plugin update: v${installed_ver} → v${latest}. Run: npx patchcord@latest install" >&2
+      fi
+    fi
+  fi
+fi
+
 # Resolve config from project-scoped .mcp.json only.
 TOKEN=""
 URL=""
@@ -46,7 +62,7 @@ MACHINE_NAME=$(hostname -s 2>/dev/null || echo "unknown")
 HTTP_CODE=$(curl -s -o /tmp/patchcord_inbox.json -w "%{http_code}" --max-time 5 \
   -H "Authorization: Bearer ${TOKEN}" \
   -H "x-patchcord-machine: ${MACHINE_NAME}" \
-  "${URL}/api/inbox?status=pending&limit=1" 2>/dev/null || echo "000")
+  "${URL}/api/inbox?status=pending&limit=5&count_only=1" 2>/dev/null || echo "000")
 
 if [ "$HTTP_CODE" = "401" ] || [ "$HTTP_CODE" = "403" ]; then
   jq -n '{
@@ -66,6 +82,37 @@ fi
 RESPONSE=$(cat /tmp/patchcord_inbox.json 2>/dev/null || echo '{"count":0}')
 rm -f /tmp/patchcord_inbox.json
 
+# ── Auto-apply custom skill from web console ──────────────────
+# Writes to .claude/skills/patchcord-custom/SKILL.md — Claude Code
+# native project-level skill directory. Auto-discovered by Claude.
+NAMESPACE=$(echo "$RESPONSE" | jq -r '.namespace_id // empty' 2>/dev/null || true)
+AGENT_ID=$(echo "$RESPONSE" | jq -r '.agent_id // empty' 2>/dev/null || true)
+
+if [ -n "$NAMESPACE" ] && [ -n "$AGENT_ID" ]; then
+  SKILL_RESP=$(curl -s --max-time 3 \
+    -H "Authorization: Bearer ${TOKEN}" \
+    "${URL}/api/skills/${NAMESPACE}/${AGENT_ID}" 2>/dev/null || true)
+
+  if [ -n "$SKILL_RESP" ]; then
+    SKILL_TEXT=$(echo "$SKILL_RESP" | jq -r '.skill_text // empty' 2>/dev/null || true)
+    SKILL_HASH=$(echo "$SKILL_TEXT" | md5sum | cut -d' ' -f1)
+    CACHE_FILE="/tmp/patchcord_skill_hash_${NAMESPACE}_${AGENT_ID}"
+    OLD_HASH=$(cat "$CACHE_FILE" 2>/dev/null || echo "")
+
+    if [ -n "$SKILL_TEXT" ] && [ "$SKILL_HASH" != "$OLD_HASH" ]; then
+      PROJECT_ROOT=$(dirname "$MCP_JSON")
+      SKILL_DIR="${PROJECT_ROOT}/.claude/skills/patchcord-custom"
+      SKILL_FILE="${SKILL_DIR}/SKILL.md"
+      mkdir -p "$SKILL_DIR"
+      printf '%s\n' "$SKILL_TEXT" > "$SKILL_FILE"
+      echo "$SKILL_HASH" > "$CACHE_FILE"
+      # Clean up old PATCHCORD.md if it exists
+      rm -f "${PROJECT_ROOT}/PATCHCORD.md"
+    fi
+  fi
+fi
+
+# ── Inbox notification ────────────────────────────────────────
 COUNT=$(echo "$RESPONSE" | jq -r '.count // .pending_count // 0' 2>/dev/null || echo "0")
 
 if [ "$COUNT" -gt 0 ]; then

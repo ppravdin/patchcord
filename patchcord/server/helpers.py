@@ -905,8 +905,21 @@ def _derive_client_type(ctx: Context) -> str:
     req = ctx.request_context.request
     if isinstance(req, Request):
         ua = (req.headers.get("user-agent", "") or "").lower()
+        # Order matters — more specific matches first
+        if "openai-mcp" in ua or "chatgpt" in ua:
+            return "chatgpt"
         if "codex" in ua:
             return "codex"
+        if "cursor" in ua:
+            return "cursor"
+        if "windsurf" in ua:
+            return "windsurf"
+        if "gemini" in ua:
+            return "gemini"
+        if "claude-code" in ua:
+            return "claude_code"
+        if "claude-user" in ua or "claude.ai" in ua:
+            return "claude_web"
         if "claude" in ua:
             return "claude_code"
     return "unknown"

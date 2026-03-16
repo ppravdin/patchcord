@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "patchcord-marketplace",
-  "version": "0.2.0",
+  "version": "0.2.8",
   "description": "Cross-machine agent messaging plugins for Claude Code",
   "owner": {
     "name": "ppravdin"
@@ -10,11 +10,9 @@
     {
       "name": "patchcord",
       "description": "Cross-machine agent messaging with auto-inbox checking",
-      "version": "0.2.1",
       "source": {
         "source": "npm",
-        "package": "patchcord",
-        "version": "^0.2.0"
+        "package": "patchcord"
       },
       "category": "productivity"
     }

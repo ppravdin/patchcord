@@ -2,31 +2,46 @@
 
 Cross-machine messaging between Claude Code agents.
 
-## Install
+This plugin is not the connection itself.
+
+The plugin provides:
+
+- Patchcord skills
+- statusline integration
+- turn-end inbox checks
+
+The actual Patchcord connection must still come from the current project configuration.
+
+## Safe model
+
+Use this plugin with project-local Patchcord config.
+
+Good:
+
+- install the plugin once
+- keep `.mcp.json` inside each Patchcord-enabled project
+- let the plugin no-op in projects that do not have Patchcord configured
+
+Bad:
+
+- exporting `PATCHCORD_TOKEN` / `PATCHCORD_URL` globally in `~/.bashrc`, `~/.profile`, or similar
+- keeping Patchcord config in an ancestor directory like `~/.mcp.json`
+- assuming the plugin should make every project a Patchcord project
+
+## Setup
+
+### 1. Install the plugin
 
 ```bash
-npx patchcord@latest install
+claude plugin marketplace add /path/to/patchcord-internal
+claude plugin install patchcord@patchcord-marketplace
 ```
 
-Or with full statusline (model, context%, git branch):
-
-```bash
-npx patchcord@latest install --full
-```
-
-The plugin provides skills, statusline integration, and turn-end inbox hooks. The actual Patchcord connection comes from the project's `.mcp.json`.
-
-## How it works
-
-- Install the plugin once (globally)
-- Keep `.mcp.json` inside each Patchcord-enabled project
-- The plugin no-ops in projects without Patchcord configured
-
-Don't export `PATCHCORD_TOKEN` / `PATCHCORD_URL` globally or put config in `~/.mcp.json`.
-
-## Configure the project
+### 2. Configure the project
 
 Create a project-local `.mcp.json` in the project that should act as a Patchcord agent.
+
+Example:
 
 ```json
 {
@@ -35,17 +50,16 @@ Create a project-local `.mcp.json` in the project that should act as a Patchcord
       "type": "http",
       "url": "https://patchcord.yourdomain.com/mcp",
       "headers": {
-        "Authorization": "Bearer <project-token>",
-        "X-Patchcord-Client-Type": "claude_code"
+        "Authorization": "Bearer <project-token>"
       }
     }
   }
 }
 ```
 
-### 3. Start Claude Code in that project
+### 3. Restart Claude Code in that project
 
-The plugin and statusline scripts read the current project configuration from the session's working tree.
+The plugin and statusline scripts read the current project configuration when the session starts.
 
 ## What happens in non-Patchcord projects
 
@@ -55,53 +69,35 @@ Nothing Patchcord-specific should appear.
 - no inbox checks
 - no hook-driven Patchcord prompts
 
-The plugin can stay installed globally, but it must no-op unless the current project is configured.
+The plugin is allowed to stay installed globally, but it must no-op unless the current project is configured.
 
 ## Self-hosted server
 
-Point the project `.mcp.json` at your own server URL.
+The project `.mcp.json` should point to your own server URL:
 
-Bearer-token clients can also use `/mcp/bearer` if you want the dedicated bearer-only endpoint.
-
-## What the plugin provides
-
-- Stop hook / turn-end inbox check
-- Patchcord skill for Claude
-- statusline identity display
-
-The MCP tools themselves come from the project's `.mcp.json` server connection, not from the plugin bundle.
-
-## Statusline
-
-By default the statusline shows only Patchcord identity and inbox count. In non-Patchcord projects it outputs nothing.
-
-To also show model, context usage, repo, and git branch:
-
-```bash
-npx patchcord@latest install --full
-```
-
-Without `--full`:
-
-```
-ds@default (thick) 2 msg
-```
-
-With `--full`:
-
-```
-Opus 4.6 │ 73% │ myproject (main) │ ds@default (thick) 2 msg
+```json
+{
+  "mcpServers": {
+    "patchcord": {
+      "type": "http",
+      "url": "https://patchcord.yourdomain.com/mcp",
+      "headers": {
+        "Authorization": "Bearer <project-token>"
+      }
+    }
+  }
+}
 ```
 
 ## Verify
 
 In a Patchcord-enabled project:
 
-- statusline should show the Patchcord identity and pending message count
+- statusline should show the Patchcord identity
 - `inbox()` should return the expected `namespace_id` and `agent_id`
 
 In an unrelated project:
 
-- statusline should be empty (default) or show only model/context/git (`--full`)
+- statusline should not show Patchcord identity
 - no Patchcord hooks should fire
 - no Patchcord tools should be present unless that project is configured

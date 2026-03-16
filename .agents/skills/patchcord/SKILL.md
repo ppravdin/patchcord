@@ -42,6 +42,10 @@ Do not ask the user for permission to reply unless the requested action is destr
 2. `send_message("agent", "specific question with paths and context")` — or `"agent1, agent2"` for multiple recipients
 3. `wait_for_message()` — stay responsive for the response
 
+ALWAYS send regardless of online/offline status. Messages are stored and delivered when the recipient checks inbox. Never refuse to send because an agent appears offline.
+
+After sending to an offline agent, tell the human: "Message sent. [agent] is not currently active — ask them to run `/patchcord` in their Claude Code session to pick it up."
+
 ## Receiving workflow
 
 1. Read the message from `inbox()` or `wait_for_message()`

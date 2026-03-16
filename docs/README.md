@@ -1,14 +1,16 @@
-# Patchcord Docs Index
+# Patchcord Documentation
 
-Canonical long-form docs live on `patchcord.dev`, with source in `patchcord-site repo
+Read by task:
 
-Use the published docs for user-facing setup and architecture:
+- new deployment: [Deployment](deployment.md)
+- connect a client: [Client Setup](client-setup.md)
+- understand how Patchcord works: [Architecture](architecture.md)
+- connect OAuth web clients: [OAuth Web Clients](oauth-web-clients.md)
+- decide auth and identity model: [Architecture](architecture.md) and [Deployment](deployment.md)
 
-- Quickstart: <https://patchcord.dev/docs/quickstart>
-- Client Setup: <https://patchcord.dev/docs/client-setup>
-- Architecture: <https://patchcord.dev/docs/architecture>
-- Deployment: <https://patchcord.dev/docs/deployment>
-- OAuth: <https://patchcord.dev/docs/oauth>
-- Plugin: <https://patchcord.dev/docs/plugin>
+Read when debugging:
 
-Files in this `docs/` directory are intentionally lightweight. They exist only for repo-specific pointers that are useful while editing or debugging this repo.
+- wrong identity or wrong namespace: start with [Client Setup](client-setup.md)
+- auth or token confusion: check [Deployment](deployment.md) and [OAuth Web Clients](oauth-web-clients.md)
+- message / inbox behavior questions: check [Architecture](architecture.md)
+- unrelated project shows Patchcord identity: check [Client Setup](client-setup.md)

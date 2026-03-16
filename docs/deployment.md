@@ -2,42 +2,43 @@
 
 ## Prerequisites
 
-- Python 3.10+
-- A Supabase project (free tier works)
-- A domain with HTTPS (for production)
-
-Docker is recommended but not required.
+- Docker and Docker Compose
+- A Supabase project with the Patchcord schema applied
+- A domain with HTTPS (e.g., via Cloudflare)
 
 ## Quick start
 
 ```bash
+# 1. Clone the repo
 git clone https://github.com/ppravdin/patchcord.git
 cd patchcord
 
+# 2. Generate tokens for your agents
+python3 -m patchcord.cli.generate_tokens --namespace myproject frontend backend ds
+
+# 3. Create .env.server
 cat > .env.server << 'EOF'
 SUPABASE_URL=https://your-ref.supabase.co
 SUPABASE_KEY=your-service-role-key
 PATCHCORD_PORT=8000
 PATCHCORD_PUBLIC_URL=https://patchcord.yourdomain.com
+PATCHCORD_TOKENS=<paste token line from step 2>
 EOF
 
-# Run from the repo root. manage_tokens auto-loads .env.server here.
-# Create bearer tokens for each agent.
-python3 -m patchcord.cli.manage_tokens add --namespace myproject frontend
-python3 -m patchcord.cli.manage_tokens add --namespace myproject backend
-python3 -m patchcord.cli.manage_tokens add --namespace myproject ds
-
+# 4. Deploy
 docker compose --env-file .env.server up -d --build
+
+# 5. Verify
 curl https://patchcord.yourdomain.com/health
 ```
 
-Before deploy, apply the schema with either:
+Before step 4, make sure the database schema is present. Use either:
 
 ```bash
 python3 -m patchcord.cli.migrate https://your-ref.supabase.co <db_password>
 ```
 
-or by running the SQL files in `migrations/` in order.
+or run [`migrations/001_initial_supabase.sql`](../migrations/001_initial_supabase.sql) in the Supabase SQL Editor.
 
 ## Environment variables
 
@@ -46,17 +47,8 @@ or by running the SQL files in `migrations/` in order.
 | Variable | Description |
 |---|---|
 | `SUPABASE_URL` | Supabase project URL |
-| `SUPABASE_KEY` | Supabase service-role key |
-| `PATCHCORD_PUBLIC_URL` | Public-facing base URL (for OAuth discovery) |
-
-Agent bearer tokens are managed in the database, not via environment variables. Use:
-
-```bash
-python3 -m patchcord.cli.manage_tokens add [--namespace ns] agent_id
-python3 -m patchcord.cli.manage_tokens add [--namespace ns] --token <existing> agent_id
-python3 -m patchcord.cli.manage_tokens list
-python3 -m patchcord.cli.manage_tokens revoke <token>
-```
+| `SUPABASE_KEY` | Supabase service_role key |
+| `PATCHCORD_TOKENS` | Token-to-agent mappings: `token1=ns:agent1,token2=ns:agent2` or bare `agent` for `default` |
 
 ### Optional
 
@@ -64,65 +56,53 @@ python3 -m patchcord.cli.manage_tokens revoke <token>
 |---|---|---|
 | `PATCHCORD_PORT` | `8000` | Server listen port |
 | `PATCHCORD_HOST` | `0.0.0.0` | Server bind address |
-| `PATCHCORD_PUBLIC_URL` | `http://localhost:{port}` | Public URL for OAuth discovery |
-| `PATCHCORD_MCP_PATH` | `/mcp` | Main MCP endpoint |
-| `PATCHCORD_BEARER_PATH` | `/mcp/bearer` | Bearer-only MCP endpoint |
-| `PATCHCORD_STATELESS_HTTP` | `true` | Remove in-memory session coupling |
-| `PATCHCORD_NAME` | `patchcord` | Service name in health output |
-| `PATCHCORD_DEFAULT_NAMESPACE` | `default` | Default namespace for bearer-token agents without an explicit namespace |
-| `PATCHCORD_ACTIVE_WINDOW_SECONDS` | `3600` | Presence activity window |
-| `PATCHCORD_PRESENCE_WRITE_INTERVAL_SECONDS` | `10` | Presence write throttle |
-| `PATCHCORD_OAUTH_DEFAULT_NAMESPACE` | `default` | Default namespace for OAuth web clients |
-| `PATCHCORD_OAUTH_CLIENTS` | _(empty)_ | Explicit OAuth `client_id=namespace:agent` mappings |
-| `PATCHCORD_KNOWN_OAUTH_CLIENTS` | _(built-in)_ | Extend known OAuth clients: `agent:domain1,domain2;agent2:domain3` |
-| `PATCHCORD_OAUTH_ACCESS_TOKEN_TTL_SECONDS` | `86400` | OAuth access-token lifetime |
-| `PATCHCORD_OAUTH_REFRESH_TOKEN_TTL_SECONDS` | `31536000` | OAuth refresh-token lifetime |
-| `PATCHCORD_ATTACHMENTS_BUCKET` | `attachments` | Storage bucket for attachments |
-| `PATCHCORD_ATTACHMENT_MAX_BYTES` | `10485760` | Attachment size limit |
-| `PATCHCORD_ATTACHMENT_URL_EXPIRY_SECONDS` | `86400` | Signed URL lifetime |
-| `PATCHCORD_ATTACHMENT_ALLOWED_MIME_TYPES` | `text/*,...` | Allowed attachment MIME types |
-| `PATCHCORD_RATE_LIMIT_PER_MINUTE` | `100` | Per-token request limit |
-| `PATCHCORD_ANON_RATE_LIMIT_PER_MINUTE` | `20` | Per-IP request limit for unauthenticated requests |
-| `PATCHCORD_RATE_BAN_SECONDS` | `60` | Persisted ban duration |
-| `PATCHCORD_CLEANUP_MAX_AGE_DAYS` | `7` | Message retention |
-| `PATCHCORD_CIRCUIT_BREAKER_SECONDS` | `300` | Circuit breaker timeout for DB subsystem recovery |
-| `PATCHCORD_CLEANUP_INTERVAL_HOURS` | `6` | Cleanup schedule |
+| `PATCHCORD_PUBLIC_URL` | `http://localhost:{port}` | Public URL for OAuth discovery. **Set this for production.** |
+| `PATCHCORD_MCP_PATH` | `/mcp` | MCP endpoint path |
+| `PATCHCORD_BEARER_PATH` | `/mcp/bearer` | Optional bearer-only MCP path for clients that want a non-OAuth endpoint |
+| `PATCHCORD_STATELESS_HTTP` | `true` | Disable in-memory MCP session tracking so clients survive stale session IDs after reconnects/restarts |
+| `PATCHCORD_NAME` | `patchcord` | Service name in health endpoint |
+| `PATCHCORD_ACTIVE_WINDOW_SECONDS` | `180` | How long before an agent is considered offline |
+| `PATCHCORD_PRESENCE_WRITE_INTERVAL_SECONDS` | `10` | Throttle interval for presence writes |
+| `PATCHCORD_OAUTH_DEFAULT_AGENT` | `oauth_client` | Fallback agent ID for unrecognized OAuth clients |
+| `PATCHCORD_OAUTH_CLIENTS` | _(empty)_ | Explicit OAuth client_id to `namespace:agent` mappings. Recommended for internet-exposed deployments. |
+| `PATCHCORD_OAUTH_REQUIRE_EXPLICIT_IDENTITY` | `false` | When `true`, OAuth clients must have an explicit mapping before authorization succeeds. Recommended for internet-exposed deployments. |
+| `PATCHCORD_OAUTH_ACCESS_TOKEN_TTL_SECONDS` | `86400` | Access token lifetime for OAuth web clients |
+| `PATCHCORD_OAUTH_REFRESH_TOKEN_TTL_SECONDS` | `31536000` | Refresh token lifetime for OAuth web clients |
+| `PATCHCORD_ATTACHMENTS_BUCKET` | `attachments` | Supabase Storage bucket used by `upload_attachment()` |
+| `PATCHCORD_ATTACHMENT_MAX_BYTES` | `10485760` | Maximum attachment size in bytes |
+| `PATCHCORD_ATTACHMENT_URL_EXPIRY_SECONDS` | `86400` | Default signed URL lifetime for attachments |
+| `PATCHCORD_ATTACHMENT_ALLOWED_MIME_TYPES` | `text/*,...` | Comma-separated allowlist for attachment MIME types |
+| `PATCHCORD_AGENT_LABELS` | _(empty)_ | Display names: `agent_id=Label,agent2=Label2` |
 
-## Breaking change: env token mappings removed
+### Alternative token formats
 
-This release no longer reads bearer tokens from:
+```env
+# Inline (recommended)
+PATCHCORD_TOKENS=abc123=myproject:frontend,def456=myproject:backend
 
-- `PATCHCORD_TOKENS`
-- `PATCHCORD_TOKEN_FILE`
-- `TOKEN_*`
+# JSON file
+PATCHCORD_TOKEN_FILE=/path/to/tokens.json
 
-All bearer tokens now live in the database (`bearer_tokens` table).
-
-If you are upgrading an existing deployment, migrate before deploy:
-
-1. Update `.env.server` with `SUPABASE_URL` and `SUPABASE_KEY`.
-2. From the repo root, import each live token into the database:
-
-```bash
-python3 -m patchcord.cli.manage_tokens add --namespace myproject --token "$OLD_FRONTEND_TOKEN" frontend
-python3 -m patchcord.cli.manage_tokens add --namespace myproject --token "$OLD_BACKEND_TOKEN" backend
+# Individual env vars
+TOKEN_abc123=myproject:frontend
+TOKEN_def456=myproject:backend
 ```
 
-3. If you want to rotate tokens instead of preserving them, omit `--token`, save the new values, and update every client/project registration before deploy.
-4. Deploy this version only after all active client tokens exist in `bearer_tokens`.
+Choose namespace casing once and keep it consistent. `AICHE:frontend` and `aiche:frontend` are different identities.
 
 ## Docker Compose
 
 The included `docker-compose.yml` runs the server with:
 
-- `read_only: true`
-- dropped capabilities
-- memory and PID limits
-- a health check
+- `read_only: true` filesystem
+- Dropped capabilities (`cap_drop: ALL`)
+- Memory limit (256MB)
+- PID limit (64)
+- Health check every 30s
 
 ### Port conflicts
 
-If port 8000 is taken:
+If port 8000 is taken, set `PATCHCORD_PORT` in `.env.server`:
 
 ```env
 PATCHCORD_PORT=8100
@@ -134,123 +114,113 @@ Then deploy with:
 PATCHCORD_PORT=8100 docker compose up -d --build
 ```
 
-Compose host-port interpolation still comes from the shell or repo-root `.env`, not from `.env.server` alone.
+Important: Docker Compose interpolates `${PATCHCORD_PORT}` for host port binding from the shell environment or a repo-root `.env` file. `env_file: .env.server` is used for container runtime env, but does not drive Compose's `${...}` expansion by itself. If you want a persistent non-8000 host port, either:
 
-## Running without Docker
-
-If you prefer to run the server directly:
-
-```bash
-git clone https://github.com/ppravdin/patchcord.git
-cd patchcord
-
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-
-# Apply schema
-.venv/bin/python -m patchcord.cli.migrate https://your-ref.supabase.co <db_password>
-
-# Create bearer tokens
-export SUPABASE_URL=https://your-ref.supabase.co
-export SUPABASE_KEY=your-service-role-key
-.venv/bin/python -m patchcord.cli.manage_tokens add --namespace myproject frontend
-
-# Run
-SUPABASE_URL=https://your-ref.supabase.co \
-SUPABASE_KEY=your-service-role-key \
-PATCHCORD_PUBLIC_URL=https://patchcord.yourdomain.com \
-.venv/bin/python -m patchcord.server.app
-```
-
-The server listens on `0.0.0.0:8000` by default. Put a reverse proxy (nginx, Caddy, Cloudflare Tunnel) in front for HTTPS.
-
-All environment variables from the [configuration table](#optional) apply the same way.
+- export `PATCHCORD_PORT` in the shell before running `docker compose`
+- add `PATCHCORD_PORT=8100` to a repo-root `.env` file used by Compose
 
 ## HTTPS with Cloudflare
 
-1. Point the DNS record at your server
-2. Use Full or Full (strict)
-3. Let Cloudflare terminate TLS
-4. Set `PATCHCORD_PUBLIC_URL=https://patchcord.yourdomain.com`
+1. Add a DNS record pointing your subdomain to your server IP
+2. Set SSL mode to **Full** or **Full (strict)**
+3. Patchcord runs HTTP inside Docker; Cloudflare terminates TLS
+4. Set `PATCHCORD_PUBLIC_URL=https://patchcord.yourdomain.com` so OAuth metadata uses HTTPS
 
 ## Updating
 
-If you are upgrading from env-backed bearer tokens, complete the migration above first.
-
 ```bash
 git pull
-python3 -m patchcord.cli.migrate <supabase_url> <db_password>
+python3 -m patchcord.cli.migrate <supabase_url> <db_password>  # or run migrations/001_initial_supabase.sql in SQL Editor
 docker compose up -d --build
 ```
 
-OAuth state lives in Supabase, so web clients survive container restarts.
+OAuth registrations, authorization codes, and tokens are stored in Supabase. Web clients can survive container restarts as long as the OAuth tables from the Patchcord schema are present. Bearer token clients are unaffected either way.
+
+`PATCHCORD_STATELESS_HTTP=true` is the recommended setting for Patchcord. FastMCP's default stateful Streamable HTTP mode keeps MCP session IDs only in process memory, which means clients can hit `Session not found` after a server restart or transport reset when they reuse an old `mcp-session-id`. Stateless mode removes that failure mode for Patchcord's request/response tool workload.
 
 ## Client endpoints
 
-- default MCP endpoint: `https://patchcord.yourdomain.com/mcp`
-- bearer-only endpoint: `https://patchcord.yourdomain.com/mcp/bearer`
+- Default MCP endpoint: `https://patchcord.yourdomain.com/mcp`
+- Optional bearer-only endpoint: `https://patchcord.yourdomain.com/mcp/bearer`
 
-Bearer-token clients can still use `/mcp`; `/mcp/bearer` is the dedicated bearer-only path.
+In the current repo, most client setup scripts and examples still point bearer-token clients at `/mcp`, and that works. Use `/mcp/bearer` if you specifically want the dedicated bearer-only path.
 
 ## OAuth deployment stance
 
-Patchcord supports:
+For private/internal setups, known-client detection may be enough.
 
-- explicit client mappings with `PATCHCORD_OAUTH_CLIENTS`
-- known-client detection, extended with `PATCHCORD_KNOWN_OAUTH_CLIENTS`
-- derived fallback from `client_name` for otherwise-unknown clients
+For an internet-exposed deployment, the safer default is:
 
-For internet-exposed deployments, prefer explicit mappings for sensitive identities and treat known-client detection as convenience, not your only trust boundary.
+```env
+PATCHCORD_OAUTH_CLIENTS=<client_id>=myproject:chatgpt
+PATCHCORD_OAUTH_REQUIRE_EXPLICIT_IDENTITY=true
+```
+
+That keeps dynamic registration while blocking fallback identities for unknown clients and preferring explicit server-side mappings. Recognized known clients can still authorize via known-client detection, so treat explicit mappings as the authoritative production path rather than assuming the flag alone disables detection.
 
 ## Attachments
 
-- `upload_attachment()` creates the bucket on first use if needed
-- files are stored as `namespace_id/agent_id/timestamp_filename`
-- `get_attachment()` only accepts signed URLs for the configured host and bucket
+- `upload_attachment()` auto-creates the configured Storage bucket on first use if it does not exist.
+- Files are stored under `namespace_id/<agent_id>/timestamp_filename`.
+- `get_attachment()` only accepts signed URLs from the configured Supabase host and attachments bucket.
 
 ## Plugin Hook Endpoint
 
-Claude plugin hooks use:
+Claude Code plugin hooks use the lightweight REST endpoint below instead of the full MCP transport:
 
 ```bash
 curl -H "Authorization: Bearer <token>" \
   "https://patchcord.yourdomain.com/api/inbox?status=pending&limit=1"
 ```
 
-Supported statuses: `pending`, `read`, `deferred`.
+Response shape:
+
+```json
+{
+  "pending_count": 1,
+  "messages": [
+    {
+      "message_id": "uuid",
+      "from": "ds",
+      "preview": "first 100 chars",
+      "sent_at": "2026-03-07T20:12:15.345571+00:00"
+    }
+  ],
+  "agent_id": "frontend",
+  "namespace_id": "default"
+}
+```
+
+Notes:
+
+- Auth is the same bearer token used for the agent's MCP connection.
+- Supported query parameters: `status=pending|read` and `limit=1..100`.
+- Invalid or missing bearer tokens return `401`.
+- Upstream data/store failures return `502`.
 
 ## Claude Code Plugin
 
-Install with:
+The repo includes a plugin at `patchcord-plugin/` for hands-free inbox checks. Install it with:
 
 ```bash
 claude plugin marketplace add /absolute/path/to/patchcord
 claude plugin install patchcord@patchcord-marketplace
 ```
 
-Pair the plugin with project-local `.mcp.json`. Do not rely on global `PATCHCORD_*` shell exports.
+The plugin should be paired with project-local `.mcp.json` config. Do not rely on global `PATCHCORD_*` shell exports.
 
 Expected behavior:
 
-- Patchcord project: statusline and hook active
+- Patchcord-enabled project: statusline and inbox hook become active
 - unrelated project: plugin no-ops
 
-## Storage backend
-
-Patchcord currently uses Supabase for:
-
-- PostgreSQL through PostgREST
-- Supabase Storage for attachments
-
-All interaction is via raw HTTP calls; there is no `supabase-py` dependency.
-
-Supabase can also be self-hosted if you want the same architecture under your own control.
+The Stop hook may appear as an `error` in Claude Code's UI. That label is cosmetic and matches Claude Code issue `#12667`; the hook intentionally returns a blocking decision so Claude continues working.
 
 ## Common failure modes
 
 ### Wrong identity
 
-Usually caused by:
+Usually caused by one of:
 
 - wrong token
 - wrong namespace casing
@@ -263,15 +233,22 @@ Usually caused by:
 Check:
 
 - `curl https://patchcord.yourdomain.com/health`
-- bearer token in project config
-- correct public URL
-- fresh client session after config changes
+- bearer token is present in the project config
+- server is listening on the public URL you configured
+- client was restarted after changing config
 
 ## Monitoring
 
 ```bash
+# Health check
 curl https://patchcord.yourdomain.com/health
+
+# Container status
 docker ps --filter name=patchcord-server
+
+# Logs
 docker logs patchcord-server --tail 100
+
+# OAuth registration events
 docker logs patchcord-server 2>&1 | grep "OAuth client registered"
 ```

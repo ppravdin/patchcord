@@ -173,14 +173,20 @@ def format_upload_attachment(data: dict[str, Any]) -> str:
     fallback = _json_fallback(data)
     if fallback is not None:
         return fallback
-    upload_url = data.get("upload_url", "")
     path = data.get("path", "")
     mime = data.get("mime_type", "")
+    if data.get("status") == "uploaded":
+        size = data.get("size_bytes", 0)
+        parts = [f"Uploaded ({size} bytes, {mime})"]
+        parts.append(f"  Path: {path}")
+        parts.append("Send the path to the other agent. They use attachment(path) to download.")
+        return "\n".join(parts)
+    upload_url = data.get("upload_url", "")
     parts = ["Upload ready"]
     parts.append(f"  PUT {upload_url}")
     parts.append(f"  Content-Type: {mime}")
     parts.append(f"  Path: {path}")
-    parts.append("Send the path to the other agent. They use get_attachment(path) to download.")
+    parts.append("Send the path to the other agent. They use attachment(path) to download.")
     return "\n".join(parts)
 
 
@@ -199,7 +205,7 @@ def format_get_attachment(data: dict[str, Any]) -> str:
     return f"[{mime}, {size} bytes, base64] {path}\n\n{b64}"
 
 
-def format_list_recent_debug(data: dict[str, Any], self_agent_id: str) -> str:
+def format_recall_history(data: dict[str, Any], self_agent_id: str) -> str:
     fallback = _json_fallback(data)
     if fallback is not None:
         return fallback
