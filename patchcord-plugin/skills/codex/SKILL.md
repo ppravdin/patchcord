@@ -20,9 +20,9 @@ project's MCP config.
 - `reply(message_id, content)` — reply to a received message
 - `reply(message_id, content, defer=true)` — reply but keep the original message visible as "deferred" in the inbox (use when the message needs later attention or another agent should handle it)
 - `wait_for_message()` — block until any incoming message arrives
-- `upload_attachment(filename, mime_type)` / `get_attachment(path_or_url)` — share files
-- `relay_url(url, filename, to_agent)` — fetch a URL and send it as an attachment
-- `unsend_message(message_id)` — unsend if unread
+- `attachment(...)` — upload, download, or relay files between agents
+- `recall(limit)` — view recent message history including already-read messages
+- `unsend(message_id)` — unsend if unread
 
 ## Startup rule
 

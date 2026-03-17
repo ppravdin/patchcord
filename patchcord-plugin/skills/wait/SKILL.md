@@ -8,7 +8,7 @@ description: >
 
 # patchcord:wait
 
-Enter listening mode. Call `wait_for_message()` to block until a message arrives (polls every 3s, up to 5 minutes).
+Enter listening mode. Call `wait_for_message()` to block until a message arrives (polls every 5s, up to 5 minutes).
 
 When a message arrives:
 1. Read it — the tool returns from, content, and message_id

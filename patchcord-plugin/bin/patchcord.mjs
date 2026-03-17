@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 
-import { existsSync, mkdirSync, cpSync } from "fs";
+import { existsSync, mkdirSync, cpSync, readdirSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { execSync } from "child_process";
+import { homedir } from "os";
+
+const HOME = homedir();
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pluginRoot = join(__dirname, "..");
@@ -16,6 +19,45 @@ function run(cmd) {
     return null;
   }
 }
+
+function isSafeToken(t) {
+  return /^[A-Za-z0-9_\-=+/.]+$/.test(t) && t.length < 200;
+}
+
+function isSafeUrl(u) {
+  try {
+    const parsed = new URL(u);
+    return parsed.protocol === "https:" || parsed.protocol === "http:";
+  } catch { return false; }
+}
+
+function isSafeId(s) {
+  return /^[A-Za-z0-9_\-]+$/.test(s) && s.length < 100;
+}
+
+const PROJECT_MARKERS = [
+  ".git", "package.json", "package-lock.json", "Cargo.toml", "go.mod", "go.sum",
+  "pyproject.toml", "pom.xml", "build.gradle", "Makefile", "CMakeLists.txt",
+  "Gemfile", "composer.json", "mix.exs", "requirements.txt", "setup.py",
+  ".claude", ".codex", ".cursor", ".vscode",
+];
+
+function detectFolder(dir) {
+  if (dir === HOME || dir === HOME + "/" || dir === "/") return "HOME";
+  for (const m of PROJECT_MARKERS) {
+    if (existsSync(join(dir, m))) return "PROJECT";
+  }
+  let entries;
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch { return "UNKNOWN"; }
+  if (entries.length === 0) return "EMPTY";
+  const files = entries.filter(e => e.isFile());
+  const dirs = entries.filter(e => e.isDirectory());
+  if (files.length === 0 && dirs.length >= 2) return "CONTAINER";
+  return "UNKNOWN";
+}
+
 
 if (cmd === "help" || cmd === "--help" || cmd === "-h") {
   console.log(`patchcord — agent messaging for AI coding agents
@@ -39,6 +81,16 @@ if (!cmd || cmd === "install" || cmd === "agent") {
   const flags = process.argv.slice(3);
   const fullStatusline = flags.includes("--full");
   const { readFileSync, writeFileSync } = await import("fs");
+
+  function safeReadJson(filePath) {
+    try {
+      let content = readFileSync(filePath, "utf-8");
+      // Strip JSONC comments (Zed, Gemini use JSONC)
+      content = content.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+      content = content.replace(/,\s*([}\]])/g, "$1");
+      return JSON.parse(content);
+    } catch { return null; }
+  }
 
   console.log(`
   ___  ____ ___ ____ _  _ ____ ____ ____ ___
@@ -71,7 +123,7 @@ if (!cmd || cmd === "install" || cmd === "agent") {
       globalChanges.push("Claude Code plugin installed");
     }
 
-    const claudeSettings = join(process.env.HOME || "", ".claude", "settings.json");
+    const claudeSettings = join(HOME, ".claude", "settings.json");
     if (existsSync(claudeSettings)) {
       try {
         const settings = JSON.parse(readFileSync(claudeSettings, "utf-8"));
@@ -109,7 +161,7 @@ if (!cmd || cmd === "install" || cmd === "agent") {
   }
 
   // Cursor
-  const cursorSkillsRoot = join(process.env.HOME || "", ".cursor", "skills-cursor");
+  const cursorSkillsRoot = join(HOME, ".cursor", "skills-cursor");
   if (existsSync(cursorSkillsRoot)) {
     const cursorSkillDir = join(cursorSkillsRoot, "patchcord");
     const cursorWaitDir = join(cursorSkillsRoot, "patchcord-wait");
@@ -128,9 +180,9 @@ if (!cmd || cmd === "install" || cmd === "agent") {
   }
 
   // Windsurf
-  if (existsSync(join(process.env.HOME || "", ".codeium", "windsurf"))) {
-    const windsurfSkillDir = join(process.env.HOME || "", ".codeium", "windsurf", "skills", "patchcord");
-    const windsurfWaitDir = join(process.env.HOME || "", ".codeium", "windsurf", "skills", "patchcord-wait");
+  if (existsSync(join(HOME, ".codeium", "windsurf"))) {
+    const windsurfSkillDir = join(HOME, ".codeium", "windsurf", "skills", "patchcord");
+    const windsurfWaitDir = join(HOME, ".codeium", "windsurf", "skills", "patchcord-wait");
     let windsurfChanged = false;
     if (!existsSync(windsurfSkillDir)) {
       mkdirSync(windsurfSkillDir, { recursive: true });
@@ -146,9 +198,10 @@ if (!cmd || cmd === "install" || cmd === "agent") {
   }
 
   // Gemini CLI
-  if (existsSync(join(process.env.HOME || "", ".gemini"))) {
-    const geminiSkillDir = join(process.env.HOME || "", ".gemini", "skills", "patchcord");
-    const geminiWaitDir = join(process.env.HOME || "", ".gemini", "skills", "patchcord-wait");
+  if (existsSync(join(HOME, ".gemini"))) {
+    const geminiSkillDir = join(HOME, ".gemini", "skills", "patchcord");
+    const geminiWaitDir = join(HOME, ".gemini", "skills", "patchcord-wait");
+    const geminiCmdDir = join(HOME, ".gemini", "commands");
     let geminiChanged = false;
     if (!existsSync(geminiSkillDir)) {
       mkdirSync(geminiSkillDir, { recursive: true });
@@ -160,11 +213,17 @@ if (!cmd || cmd === "install" || cmd === "agent") {
       cpSync(join(pluginRoot, "skills", "wait", "SKILL.md"), join(geminiWaitDir, "SKILL.md"));
       geminiChanged = true;
     }
-    if (geminiChanged) globalChanges.push("Gemini CLI skills installed");
+    if (!existsSync(join(geminiCmdDir, "patchcord.toml"))) {
+      mkdirSync(geminiCmdDir, { recursive: true });
+      cpSync(join(pluginRoot, "commands", "patchcord.toml"), join(geminiCmdDir, "patchcord.toml"));
+      cpSync(join(pluginRoot, "commands", "patchcord-wait.toml"), join(geminiCmdDir, "patchcord-wait.toml"));
+      geminiChanged = true;
+    }
+    if (geminiChanged) globalChanges.push("Gemini CLI skills + commands installed");
   }
 
   // Codex CLI
-  const codexConfig = join(process.env.HOME || "", ".codex", "config.toml");
+  const codexConfig = join(HOME, ".codex", "config.toml");
   if (existsSync(codexConfig)) {
     const content = readFileSync(codexConfig, "utf-8");
     if (!content.includes("[apps.patchcord]")) {
@@ -198,31 +257,54 @@ if (!cmd || cmd === "install" || cmd === "agent") {
   console.log(`  ${cyan}2.${r} Codex CLI`);
   console.log(`  ${cyan}3.${r} Cursor`);
   console.log(`  ${cyan}4.${r} Windsurf`);
-  console.log(`  ${cyan}5.${r} Gemini CLI\n`);
+  console.log(`  ${cyan}5.${r} Gemini CLI`);
+  console.log(`  ${cyan}6.${r} VS Code (Copilot)`);
+  console.log(`  ${cyan}7.${r} Zed`);
+  console.log(`  ${cyan}8.${r} OpenCode\n`);
 
-  const choice = (await ask(`${dim}Choose (1/2/3/4/5):${r} `)).trim();
+  const choice = (await ask(`${dim}Choose (1-8):${r} `)).trim();
   const isCodex = choice === "2";
   const isCursor = choice === "3";
   const isWindsurf = choice === "4";
   const isGemini = choice === "5";
+  const isVSCode = choice === "6";
+  const isZed = choice === "7";
+  const isOpenCode = choice === "8";
 
-  if (!["1", "2", "3", "4", "5"].includes(choice)) {
+  if (!["1", "2", "3", "4", "5", "6", "7", "8"].includes(choice)) {
     console.error("Invalid choice.");
     rl.close();
     process.exit(1);
   }
 
-  if (isWindsurf || isGemini) {
-    const toolLabel = isWindsurf ? "Windsurf" : "Gemini CLI";
+  if (isWindsurf || isGemini || isZed) {
+    const toolLabel = isZed ? "Zed" : isWindsurf ? "Windsurf" : "Gemini CLI";
     console.log(`\n  ${yellow}Note: ${toolLabel} uses global config — applies to all projects.${r}`);
   } else {
-    console.log(`\n${dim}Project folder:${r} ${bold}${cwd}${r}`);
-    console.log(`${dim}Config will be created here. Run this in your project folder.${r}`);
-    const proceed = (await ask(`${dim}Continue? (Y/n):${r} `)).trim().toLowerCase();
-    if (proceed === "n" || proceed === "no") {
+    const folderType = detectFolder(cwd);
+    const folderName = cwd.split("/").pop() || cwd.split("\\").pop() || cwd;
+
+    if (folderType === "HOME") {
+      console.log(`\n  ${red}✗ You're in your home folder.${r}`);
+      console.log(`  ${yellow}Patchcord must be installed inside a project folder —${r}`);
+      console.log(`  ${yellow}the folder where your agent actually runs.${r}`);
+      console.log(`  ${dim}cd into your project first, then run this again.${r}`);
       rl.close();
       process.exit(0);
+    } else if (folderType === "CONTAINER") {
+      console.log(`\n  ${yellow}⚠ This looks like a projects container, not a project.${r}`);
+      console.log(`  ${dim}${cwd}${r}`);
+      console.log(`  ${dim}Patchcord should be installed inside a project, not the folder above it.${r}`);
+      const proceed = (await ask(`  ${dim}Set up here anyway? (y/N):${r} `)).trim().toLowerCase();
+      if (proceed !== "y" && proceed !== "yes") {
+        console.log(`  ${dim}cd into your project and run this again.${r}`);
+        rl.close();
+        process.exit(0);
+      }
     }
+
+    console.log(`\n  ${dim}Agent identity:${r} ${bold}${folderName}${r}`);
+    console.log(`  ${dim}Folder:${r} ${cwd}`);
   }
 
 
@@ -262,7 +344,7 @@ if (!cmd || cmd === "install" || cmd === "agent") {
       } catch {}
     }
     // Warn about global config conflict
-    const globalCursor = join(process.env.HOME || "", ".cursor", "mcp.json");
+    const globalCursor = join(HOME, ".cursor", "mcp.json");
     if (existsSync(globalCursor)) {
       try {
         const global = JSON.parse(readFileSync(globalCursor, "utf-8"));
@@ -275,7 +357,7 @@ if (!cmd || cmd === "install" || cmd === "agent") {
       } catch {}
     }
   } else if (isWindsurf) {
-    const wsPath = join(process.env.HOME || "", ".codeium", "windsurf", "mcp_config.json");
+    const wsPath = join(HOME, ".codeium", "windsurf", "mcp_config.json");
     if (existsSync(wsPath)) {
       try {
         const content = readFileSync(wsPath, "utf-8").trim();
@@ -293,10 +375,10 @@ if (!cmd || cmd === "install" || cmd === "agent") {
       } catch {}
     }
   } else if (isGemini) {
-    const geminiPath = join(process.env.HOME || "", ".gemini", "settings.json");
+    const geminiPath = join(HOME, ".gemini", "settings.json");
     if (existsSync(geminiPath)) {
       try {
-        const existing = JSON.parse(readFileSync(geminiPath, "utf-8"));
+        const existing = safeReadJson(geminiPath) || {};
         if (existing.mcpServers?.patchcord) {
           console.log(`\n  ${yellow}⚠ Gemini CLI already configured${r}`);
           console.log(`  ${dim}${geminiPath}${r}`);
@@ -309,7 +391,76 @@ if (!cmd || cmd === "install" || cmd === "agent") {
         }
       } catch {}
     }
+  } else if (isVSCode) {
+    const vscodePath = join(cwd, ".vscode", "mcp.json");
+    if (existsSync(vscodePath)) {
+      try {
+        const existing = JSON.parse(readFileSync(vscodePath, "utf-8"));
+        if (existing.servers?.patchcord) {
+          console.log(`\n  ${yellow}⚠ VS Code already configured in this project${r}`);
+          console.log(`  ${dim}${vscodePath}${r}`);
+          const replace = (await ask(`  ${dim}Replace? (y/N):${r} `)).trim().toLowerCase();
+          if (replace !== "y" && replace !== "yes") {
+            console.log("Keeping existing config.");
+            rl.close();
+            process.exit(0);
+          }
+        }
+      } catch {}
+    }
+  } else if (isZed) {
+    const zedPath = process.platform === "darwin"
+      ? join(HOME, "Library", "Application Support", "Zed", "settings.json")
+      : join(HOME, ".config", "zed", "settings.json");
+    if (existsSync(zedPath)) {
+      try {
+        const existing = safeReadJson(zedPath) || {};
+        if (existing.context_servers?.patchcord) {
+          console.log(`\n  ${yellow}⚠ Zed already configured${r}`);
+          console.log(`  ${dim}${zedPath}${r}`);
+          const replace = (await ask(`  ${dim}Replace? (y/N):${r} `)).trim().toLowerCase();
+          if (replace !== "y" && replace !== "yes") {
+            console.log("Keeping existing config.");
+            rl.close();
+            process.exit(0);
+          }
+        }
+      } catch {}
+    }
+  } else if (isOpenCode) {
+    const ocPath = join(cwd, "opencode.json");
+    if (existsSync(ocPath)) {
+      try {
+        const existing = JSON.parse(readFileSync(ocPath, "utf-8"));
+        if (existing.mcp?.patchcord) {
+          console.log(`\n  ${yellow}⚠ OpenCode already configured in this project${r}`);
+          console.log(`  ${dim}${ocPath}${r}`);
+          const replace = (await ask(`  ${dim}Replace? (y/N):${r} `)).trim().toLowerCase();
+          if (replace !== "y" && replace !== "yes") {
+            console.log("Keeping existing config.");
+            rl.close();
+            process.exit(0);
+          }
+        }
+      } catch {}
+    }
   } else if (isCodex) {
+    // Check global config for stale patchcord MCP — user may have run installer in ~ by mistake
+    const globalCodexConfig = join(HOME, ".codex", "config.toml");
+    if (existsSync(globalCodexConfig)) {
+      const globalContent = readFileSync(globalCodexConfig, "utf-8");
+      if (globalContent.includes("[mcp_servers.patchcord]")) {
+        console.log(`\n  ${red}⚠ Patchcord is in your GLOBAL Codex config!${r}`);
+        console.log(`  ${dim}${globalCodexConfig}${r}`);
+        console.log(`  ${yellow}This overrides per-project config and causes conflicts.${r}`);
+        const cleanGlobal = (await ask(`  ${dim}Remove patchcord from global config? (Y/n):${r} `)).trim().toLowerCase();
+        if (cleanGlobal !== "n" && cleanGlobal !== "no") {
+          const cleaned = globalContent.replace(/\[mcp_servers\.patchcord\]\n(?:(?!\[)[^\n]*\n?)*/g, "").replace(/\n{3,}/g, "\n\n").trim();
+          writeFileSync(globalCodexConfig, cleaned + "\n");
+          console.log(`  ${green}✓${r} Removed from global config`);
+        }
+      }
+    }
     const configPath = join(cwd, ".codex", "config.toml");
     if (existsSync(configPath)) {
       const content = readFileSync(configPath, "utf-8");
@@ -342,6 +493,12 @@ if (!cmd || cmd === "install" || cmd === "agent") {
       process.exit(1);
     }
 
+    if (!isSafeToken(token)) {
+      console.log(`  ${red}✗${r} Invalid token format`);
+      rl.close();
+      process.exit(1);
+    }
+
     console.log("Validating...");
     const validateResp = run(`curl -sf --max-time 5 -H "Authorization: Bearer ${token}" "${serverUrl}/api/inbox?limit=0"`);
     if (validateResp) {
@@ -364,23 +521,19 @@ if (!cmd || cmd === "install" || cmd === "agent") {
   const customUrl = (await ask(`\n${dim}Custom server URL? (y/N):${r} `)).trim().toLowerCase();
   if (customUrl === "y" || customUrl === "yes") {
     const url = (await ask("Server URL: ")).trim();
-    if (url) serverUrl = url;
-
-    // Re-validate against custom server if identity wasn't found
-    if (!identity) {
-      console.log("Validating token...");
-      const resp2 = run(`curl -sf --max-time 5 -H "Authorization: Bearer ${token}" "${serverUrl}/api/inbox?limit=0"`);
-      if (resp2) {
-        try {
-          const data = JSON.parse(resp2);
-          identity = `${data.agent_id}@${data.namespace_id}`;
-          console.log(`  ${green}✓${r} ${bold}${identity}${r}`);
-        } catch {}
+    if (url) {
+      if (!isSafeUrl(url)) {
+        console.error("Invalid URL. Must start with https:// or http://");
+        rl.close();
+        process.exit(1);
       }
+      serverUrl = url;
     }
   }
 
   rl.close();
+
+  const hostname = run("hostname -s") || run("hostname") || "unknown";
 
   if (isCursor) {
     // Cursor: write .cursor/mcp.json (per-project)
@@ -390,13 +543,11 @@ if (!cmd || cmd === "install" || cmd === "agent") {
     const cursorConfig = {
       mcpServers: {
         patchcord: {
-          command: "npx",
-          args: [
-            "-y", "mcp-remote",
-            serverUrl,
-            "--header",
-            `Authorization: Bearer ${token}`,
-          ],
+          url: `${serverUrl}/mcp/bearer`,
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "X-Patchcord-Machine": hostname,
+          },
         },
       },
     };
@@ -417,17 +568,15 @@ if (!cmd || cmd === "install" || cmd === "agent") {
     console.log(`  ${dim}Per-project only — other projects won't see this agent.${r}`);
   } else if (isWindsurf) {
     // Windsurf: global only (~/.codeium/windsurf/mcp_config.json)
-    const wsPath = join(process.env.HOME || "", ".codeium", "windsurf", "mcp_config.json");
+    const wsPath = join(HOME, ".codeium", "windsurf", "mcp_config.json");
     const wsConfig = {
       mcpServers: {
         patchcord: {
-          command: "npx",
-          args: [
-            "-y", "mcp-remote",
-            serverUrl,
-            "--header",
-            `Authorization: Bearer ${token}`,
-          ],
+          url: `${serverUrl}/mcp/bearer`,
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "X-Patchcord-Machine": hostname,
+          },
         },
       },
     };
@@ -443,31 +592,21 @@ if (!cmd || cmd === "install" || cmd === "agent") {
         writeFileSync(wsPath, JSON.stringify(wsConfig, null, 2) + "\n");
       }
     } else {
-      mkdirSync(join(process.env.HOME || "", ".codeium", "windsurf"), { recursive: true });
+      mkdirSync(join(HOME, ".codeium", "windsurf"), { recursive: true });
       writeFileSync(wsPath, JSON.stringify(wsConfig, null, 2) + "\n");
     }
-    // Install workflows as slash commands (.windsurf/workflows/) — per-project
-    const wsWorkflowDir = join(cwd, ".windsurf", "workflows");
-    mkdirSync(wsWorkflowDir, { recursive: true });
-    cpSync(join(pluginRoot, "skills", "inbox", "SKILL.md"), join(wsWorkflowDir, "patchcord.md"));
-    cpSync(join(pluginRoot, "skills", "wait", "SKILL.md"), join(wsWorkflowDir, "patchcord-wait.md"));
     console.log(`\n  ${green}✓${r} Windsurf configured: ${dim}${wsPath}${r}`);
-    console.log(`  ${green}✓${r} Workflows installed: ${dim}/patchcord${r}, ${dim}/patchcord-wait${r}`);
-    console.log(`  ${yellow}MCP config is global — all Windsurf projects share this agent.${r}`);
+    console.log(`  ${yellow}Global config — all Windsurf projects share this agent.${r}`);
   } else if (isGemini) {
     // Gemini CLI: global only (~/.gemini/settings.json)
-    const geminiPath = join(process.env.HOME || "", ".gemini", "settings.json");
-    let geminiSettings = {};
-    if (existsSync(geminiPath)) {
-      try {
-        geminiSettings = JSON.parse(readFileSync(geminiPath, "utf-8"));
-      } catch {}
-    }
+    const geminiPath = join(HOME, ".gemini", "settings.json");
+    let geminiSettings = (existsSync(geminiPath) && safeReadJson(geminiPath)) || {};
     if (!geminiSettings.mcpServers) geminiSettings.mcpServers = {};
     geminiSettings.mcpServers.patchcord = {
       httpUrl: `${serverUrl}/mcp`,
       headers: {
         Authorization: `Bearer ${token}`,
+        "X-Patchcord-Machine": hostname,
       },
     };
     // Clean up deprecated tools.allowed if present (removed in Gemini CLI 1.0)
@@ -475,10 +614,83 @@ if (!cmd || cmd === "install" || cmd === "agent") {
       geminiSettings.tools.allowed = geminiSettings.tools.allowed.filter(t => !t.startsWith("mcp_patchcord_"));
       if (geminiSettings.tools.allowed.length === 0) delete geminiSettings.tools;
     }
-    mkdirSync(join(process.env.HOME || "", ".gemini"), { recursive: true });
+    mkdirSync(join(HOME, ".gemini"), { recursive: true });
     writeFileSync(geminiPath, JSON.stringify(geminiSettings, null, 2) + "\n");
     console.log(`\n  ${green}✓${r} Gemini CLI configured: ${dim}${geminiPath}${r}`);
     console.log(`  ${yellow}Global config — all Gemini CLI projects share this agent.${r}`);
+  } else if (isZed) {
+    // Zed: global settings.json → context_servers
+    const zedPath = process.platform === "darwin"
+      ? join(HOME, "Library", "Application Support", "Zed", "settings.json")
+      : join(HOME, ".config", "zed", "settings.json");
+    let zedSettings = (existsSync(zedPath) && safeReadJson(zedPath)) || {};
+    if (!zedSettings.context_servers) zedSettings.context_servers = {};
+    zedSettings.context_servers.patchcord = {
+      url: `${serverUrl}/mcp`,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "X-Patchcord-Machine": hostname,
+      },
+    };
+    const zedDir = process.platform === "darwin"
+      ? join(HOME, "Library", "Application Support", "Zed")
+      : join(HOME, ".config", "zed");
+    mkdirSync(zedDir, { recursive: true });
+    writeFileSync(zedPath, JSON.stringify(zedSettings, null, 2) + "\n");
+    console.log(`\n  ${green}✓${r} Zed configured: ${dim}${zedPath}${r}`);
+    console.log(`  ${yellow}Global config — all Zed projects share this agent.${r}`);
+  } else if (isOpenCode) {
+    // OpenCode: per-project opencode.json → mcp
+    const ocPath = join(cwd, "opencode.json");
+    let ocConfig = {};
+    if (existsSync(ocPath)) {
+      try {
+        ocConfig = JSON.parse(readFileSync(ocPath, "utf-8"));
+      } catch {}
+    }
+    if (!ocConfig.mcp) ocConfig.mcp = {};
+    ocConfig.mcp.patchcord = {
+      type: "remote",
+      url: `${serverUrl}/mcp`,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "X-Patchcord-Machine": hostname,
+      },
+    };
+    writeFileSync(ocPath, JSON.stringify(ocConfig, null, 2) + "\n");
+    console.log(`\n  ${green}✓${r} OpenCode configured: ${dim}${ocPath}${r}`);
+  } else if (isVSCode) {
+    // VS Code: write .vscode/mcp.json (per-project)
+    const vscodeDir = join(cwd, ".vscode");
+    mkdirSync(vscodeDir, { recursive: true });
+    const vscodePath = join(vscodeDir, "mcp.json");
+    const vscodeConfig = {
+      servers: {
+        patchcord: {
+          type: "http",
+          url: `${serverUrl}/mcp`,
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "X-Patchcord-Machine": hostname,
+          },
+        },
+      },
+    };
+
+    if (existsSync(vscodePath)) {
+      try {
+        const existing = JSON.parse(readFileSync(vscodePath, "utf-8"));
+        existing.servers = existing.servers || {};
+        existing.servers.patchcord = vscodeConfig.servers.patchcord;
+        writeFileSync(vscodePath, JSON.stringify(existing, null, 2) + "\n");
+      } catch {
+        writeFileSync(vscodePath, JSON.stringify(vscodeConfig, null, 2) + "\n");
+      }
+    } else {
+      writeFileSync(vscodePath, JSON.stringify(vscodeConfig, null, 2) + "\n");
+    }
+    console.log(`\n  ${green}✓${r} VS Code configured: ${dim}${vscodePath}${r}`);
+    console.log(`  ${dim}Requires GitHub Copilot extension with agent mode enabled.${r}`);
   } else if (isCodex) {
     // Codex: copy skill + write config + install slash commands
     const dest = join(cwd, ".agents", "skills", "patchcord");
@@ -489,9 +701,19 @@ if (!cmd || cmd === "install" || cmd === "agent") {
     mkdirSync(codexDir, { recursive: true });
     const configPath = join(codexDir, "config.toml");
     let existing = existsSync(configPath) ? readFileSync(configPath, "utf-8") : "";
-    if (!existing.includes("[mcp_servers.patchcord]")) {
-      existing = existing.trimEnd() + `\n\n[mcp_servers.patchcord]\nurl = "${serverUrl}/mcp/bearer"\nhttp_headers = { "Authorization" = "Bearer ${token}", "X-Patchcord-Client-Type" = "codex" }\n`;
-      writeFileSync(configPath, existing);
+    // Remove old patchcord config block if present
+    existing = existing.replace(/\[mcp_servers\.patchcord\]\n(?:(?!\[)[^\n]*\n?)*/g, "").replace(/\n{3,}/g, "\n\n").trim();
+    existing = existing.trimEnd() + `\n\n[mcp_servers.patchcord]\nurl = "${serverUrl}/mcp/bearer"\nhttp_headers = { "Authorization" = "Bearer ${token}", "X-Patchcord-Machine" = "${hostname}" }\n`;
+    writeFileSync(configPath, existing);
+    // Clean up any PATCHCORD_TOKEN we previously wrote to .env
+    const envPath = join(cwd, ".env");
+    if (existsSync(envPath)) {
+      const envContent = readFileSync(envPath, "utf-8");
+      if (envContent.includes("PATCHCORD_TOKEN=")) {
+        const cleaned = envContent.replace(/^PATCHCORD_TOKEN=.*\n?/gm, "").replace(/\n{3,}/g, "\n\n").trim();
+        writeFileSync(envPath, cleaned ? cleaned + "\n" : "");
+        console.log(`  ${green}✓${r} Cleaned PATCHCORD_TOKEN from .env`);
+      }
     }
     // Slash commands (.codex/prompts/)
     const codexPromptsDir = join(codexDir, "prompts");
@@ -510,6 +732,7 @@ if (!cmd || cmd === "install" || cmd === "agent") {
           url: `${serverUrl}/mcp`,
           headers: {
             Authorization: `Bearer ${token}`,
+            "X-Patchcord-Machine": hostname,
           },
         },
       },
@@ -530,7 +753,29 @@ if (!cmd || cmd === "install" || cmd === "agent") {
     console.log(`\n  ${green}✓${r} Claude Code configured: ${dim}${mcpPath}${r}`);
   }
 
-  const toolName = isGemini ? "Gemini CLI" : isWindsurf ? "Windsurf" : isCursor ? "Cursor" : isCodex ? "Codex" : "Claude Code";
+  // Warn about gitignore for per-project configs with tokens
+  if (!isWindsurf && !isGemini && !isZed) {
+    const gitignorePath = join(cwd, ".gitignore");
+    const configFile = isCodex ? ".codex/config.toml" : isCursor ? ".cursor/mcp.json" : isVSCode ? ".vscode/mcp.json" : isOpenCode ? "opencode.json" : ".mcp.json";
+    let needsWarning = true;
+    if (existsSync(gitignorePath)) {
+      const gi = readFileSync(gitignorePath, "utf-8");
+      if (gi.includes(configFile) || gi.includes(".mcp.json") || gi.includes(".codex/") || gi.includes(".cursor/")) {
+        needsWarning = false;
+      }
+    }
+    if (needsWarning) {
+      console.log(`\n  ${yellow}⚠ Add ${configFile} to .gitignore — it contains your token${r}`);
+    }
+  }
+
+  const toolName = isOpenCode ? "OpenCode" : isZed ? "Zed" : isVSCode ? "VS Code" : isGemini ? "Gemini CLI" : isWindsurf ? "Windsurf" : isCursor ? "Cursor" : isCodex ? "Codex" : "Claude Code";
+
+  if (!isWindsurf && !isGemini && !isZed) {
+    console.log(`\n  ${dim}To connect a second agent:${r}`);
+    console.log(`  ${dim}cd into another project and run${r} ${bold}npx patchcord@latest${r} ${dim}there.${r}`);
+  }
+
   console.log(`\n${dim}Restart your ${toolName} session, then run:${r} ${bold}inbox()${r}`);
   process.exit(0);
 }
@@ -570,7 +815,7 @@ if (cmd === "skill") {
   const baseUrl = mcpUrl.replace(/\/mcp(\/bearer)?$/, "");
   const token = auth.replace(/^Bearer\s+/, "");
 
-  if (!baseUrl || !token) {
+  if (!baseUrl || !token || !isSafeToken(token)) {
     console.error("Cannot read patchcord URL/token from .mcp.json");
     process.exit(1);
   }
@@ -586,7 +831,7 @@ if (cmd === "skill") {
     }
   } catch {}
 
-  if (!namespace || !agentId) {
+  if (!namespace || !agentId || !isSafeId(namespace) || !isSafeId(agentId)) {
     console.error("Cannot determine agent identity. Check your token.");
     process.exit(1);
   }

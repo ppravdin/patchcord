@@ -32,6 +32,29 @@ from patchcord.server.config import (
 
 _log = logging.getLogger(__name__)
 
+# Agent ID → client_type for known CLI tools
+_AGENT_ID_TO_CLIENT_TYPE = {
+    "cursor": "cursor",
+    "codex": "codex",
+    "windsurf": "windsurf",
+}
+_CLAUDE_CODE_AGENT_IDS = {"backend", "frontend", "ios", "android", "linux", "mac", "windows"}
+
+
+def _infer_client_type_from_agent_id(agent_id: str) -> str:
+    """Best-effort client_type from agent_id for known patterns."""
+    if agent_id in _AGENT_ID_TO_CLIENT_TYPE:
+        return _AGENT_ID_TO_CLIENT_TYPE[agent_id]
+    if agent_id in _CLAUDE_CODE_AGENT_IDS:
+        return "claude_code"
+    return agent_id
+
+
+# Cooldown for presence updates triggered by token validation.
+# Prevents spamming the DB on every /mcp request.
+_presence_cooldown: dict[str, float] = {}
+_PRESENCE_COOLDOWN_SECONDS = 30
+
 # ---------------------------------------------------------------------------
 # OAuth data classes
 # ---------------------------------------------------------------------------
@@ -381,6 +404,22 @@ class PatchcordOAuthProvider:
                 else:
                     raise
 
+        # Mark agent online immediately on OAuth token issue
+        if not helpers.is_registry_disabled():
+            try:
+                await helpers._upsert_registry(
+                    {
+                        "namespace_id": namespace_id,
+                        "agent_id": agent_id,
+                        "status": "online",
+                        "last_seen": now_iso(),
+                        "updated_at": now_iso(),
+                        "meta": {"client_type": agent_id},
+                    }
+                )
+            except Exception:
+                _log.debug("failed to mark agent online on token issue", exc_info=True)
+
         return OAuthToken(
             access_token=access_token,
             token_type="Bearer",
@@ -396,6 +435,26 @@ class PatchcordOAuthProvider:
         db_identity = await helpers.lookup_bearer_token(token)
         if db_identity:
             namespace_id, agent_id_val = db_identity
+            # Mark agent online on connection — not on first tool call
+            presence_key = f"{namespace_id}:{agent_id_val}"
+            now = time.time()
+            if now - _presence_cooldown.get(presence_key, 0) > _PRESENCE_COOLDOWN_SECONDS:
+                _presence_cooldown[presence_key] = now
+                if not helpers.is_registry_disabled():
+                    try:
+                        _client_type = _infer_client_type_from_agent_id(agent_id_val)
+                        await helpers._upsert_registry(
+                            {
+                                "namespace_id": namespace_id,
+                                "agent_id": agent_id_val,
+                                "status": "online",
+                                "last_seen": now_iso(),
+                                "updated_at": now_iso(),
+                                "meta": {"client_type": _client_type},
+                            }
+                        )
+                    except Exception:
+                        _log.debug("presence update on token auth failed", exc_info=True)
             return AccessToken(
                 token=token,
                 client_id=f"{namespace_id}:{agent_id_val}",

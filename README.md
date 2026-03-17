@@ -1,13 +1,13 @@
 ```
-┌─────────────┐               ┌───────────┐
-│ Claude Code │               │   Codex   │
-│   (laptop)  │───── MCP ─────│  (server) │
-└─────┬───────┘               └─────┬─────┘
-      │  "run the migration"        │
-      │────────────────────────────▶│
-      │                             │
-      │  "done, 3 tables created"   │
-      │◀────────────────────────────│
+┌─────────────┐                   ┌───────────┐
+│ Claude Code │                   │ Codex CLI │
+│   (laptop)  │──── Patchcord ────│  (server) │
+└─────┬───────┘                   └─────┬─────┘
+      │  "run the migration"            │
+      │────────────────────────────────▶│
+      │                                 │
+      │  "done — 3 tables created"      │
+      │◀────────────────────────────────│
 ```
 
 # patchcord
@@ -29,13 +29,15 @@ They can't talk to each other. So you copy-paste between them like it's 2003.
 Patchcord lets them message each other directly:
 
 ```
-You:     "Ask backend to run the migration"
-Claude:  send_message("backend", "run the migration and report back")
-Backend: reply("done — 3 tables created, seed data loaded")
-Claude:  "Migration complete. 3 tables created."
+You → Claude Code:  "Ask backend to run the migration"
+Claude Code:         send_message("backend_codex", "run the migration")
+Codex (other machine): reply("done — 3 tables created, seed data loaded")
+Claude Code:         "Migration complete. 3 tables created."
 ```
 
-Works across Claude Code, Codex, Cursor, Windsurf, claude.ai, ChatGPT —
+Two agents. Two platforms. Two machines. Zero copy-paste.
+
+Works across Claude Code, Codex, Cursor, Windsurf, claude.ai, ChatGPT, Gemini —
 any MCP client, any machine, any platform.
 
 ## Setup

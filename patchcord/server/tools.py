@@ -69,6 +69,7 @@ from patchcord.server.helpers import (
     _resolve_target_agent,
     _storage_request,
     _touch_presence,
+    get_user_namespace_ids,
     http_client,
     namespace_ids_match,
     ssrf_safe_client,
@@ -84,8 +85,10 @@ async def _scoped_namespace_ids(namespace_id: str, ctx: Context) -> list[str]:
     OAuth agents (claude.ai, chatgpt) see all of the user's namespaces.
     Token agents (Claude Code, Cursor, etc.) see only their own namespace.
     """
+    from patchcord.server.helpers import get_user_namespace_ids
+
     if _is_oauth_agent(ctx):
-        return await _scoped_namespace_ids(namespace_id, ctx)
+        return await get_user_namespace_ids(namespace_id)
     return [namespace_id]
 
 

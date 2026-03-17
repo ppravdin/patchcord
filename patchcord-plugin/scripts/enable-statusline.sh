@@ -13,16 +13,22 @@ for arg in "$@"; do
     [ "$arg" = "--full" ] && EXTRA_ARGS=" --full"
 done
 
-# Find the statusline script path
+# Copy statusline.sh to a stable location (npx cache can be cleared)
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-STATUSLINE="$SCRIPT_DIR/statusline.sh"
+SRC_STATUSLINE="$SCRIPT_DIR/statusline.sh"
+STABLE_DIR="$HOME/.claude/patchcord"
+STABLE_STATUSLINE="$STABLE_DIR/statusline.sh"
 
-if [ ! -f "$STATUSLINE" ]; then
-    echo "Error: statusline.sh not found at $STATUSLINE" >&2
+if [ ! -f "$SRC_STATUSLINE" ]; then
+    echo "Error: statusline.sh not found at $SRC_STATUSLINE" >&2
     exit 1
 fi
 
-NEW_CMD="bash \"$STATUSLINE\"${EXTRA_ARGS}"
+mkdir -p "$STABLE_DIR"
+cp "$SRC_STATUSLINE" "$STABLE_STATUSLINE"
+chmod +x "$STABLE_STATUSLINE"
+
+NEW_CMD="bash \"$STABLE_STATUSLINE\"${EXTRA_ARGS}"
 
 # Decide where to write
 USER_SETTINGS="$HOME/.claude/settings.json"

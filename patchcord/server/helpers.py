@@ -163,6 +163,8 @@ _last_presence_write: dict[str, float] = {}
 # Loaded from DB on first lookup, then cached in memory.
 _bearer_token_cache: dict[str, tuple[str, str]] = {}
 _bearer_token_cache_loaded = False
+_bearer_token_cache_time: float = 0.0
+_BEARER_CACHE_REFRESH_SECONDS = 300  # re-check DB every 5 min for CLI revocations
 
 _log = logging.getLogger("patchcord.server.helpers")
 
@@ -237,21 +239,24 @@ def _hash_bearer_token(token: str) -> str:
 
 
 async def _load_bearer_token_cache() -> None:
-    """Load all active bearer tokens from DB into memory cache. Called once."""
-    global _bearer_token_cache_loaded
-    if _bearer_token_cache_loaded or _is_bearer_tokens_disabled():
+    """Load all active bearer tokens from DB into memory cache. Refreshes every 5 min."""
+    global _bearer_token_cache_loaded, _bearer_token_cache_time
+    if _is_bearer_tokens_disabled():
         return
     try:
         rows = await _get_rows(
             BEARER_TOKENS_BASE,
             {"active": "eq.true", "select": "token_hash,namespace_id,agent_id"},
         )
+        fresh: dict[str, tuple[str, str]] = {}
         for row in rows:
             token_hash = row.get("token_hash", "")
             ns = row.get("namespace_id", "default").lower()
             agent = row.get("agent_id", "").lower()
             if token_hash and agent:
-                _bearer_token_cache[token_hash] = (ns, agent)
+                fresh[token_hash] = (ns, agent)
+        _bearer_token_cache.clear()
+        _bearer_token_cache.update(fresh)
         _log.info("loaded %d bearer tokens from DB", len(_bearer_token_cache))
     except Exception as exc:
         body = ""
@@ -264,13 +269,14 @@ async def _load_bearer_token_cache() -> None:
             _log.warning("failed to load bearer tokens from DB: %s", exc)
     finally:
         _bearer_token_cache_loaded = True
+        _bearer_token_cache_time = time.monotonic()
 
 
 async def lookup_bearer_token(token: str) -> tuple[str, str] | None:
     """Look up a bearer token, checking DB cache. Returns (namespace_id, agent_id) or None."""
     if _is_bearer_tokens_disabled():
         return None
-    if not _bearer_token_cache_loaded:
+    if not _bearer_token_cache_loaded or (time.monotonic() - _bearer_token_cache_time) >= _BEARER_CACHE_REFRESH_SECONDS:
         await _load_bearer_token_cache()
     token_hash = _hash_bearer_token(token)
     cached = _bearer_token_cache.get(token_hash)
@@ -339,6 +345,8 @@ async def deactivate_bearer_token(token: str) -> bool:
 # Cache: namespace_id → list of all namespace_ids owned by the same user
 _user_ns_cache: dict[str, list[str]] = {}
 _user_ns_cache_loaded = False
+_user_ns_cache_time: float = 0.0
+_USER_NS_CACHE_REFRESH_SECONDS = 300
 _user_ns_disabled_until: float = 0.0
 
 
@@ -361,8 +369,8 @@ def _disable_user_ns() -> None:
 
 async def _load_user_ns_cache() -> None:
     """Load the full user_namespaces table into memory. Called once."""
-    global _user_ns_cache_loaded
-    if _user_ns_cache_loaded or _is_user_ns_disabled():
+    global _user_ns_cache_loaded, _user_ns_cache_time
+    if _is_user_ns_disabled():
         return
     try:
         rows = await _get_rows(
@@ -395,6 +403,7 @@ async def _load_user_ns_cache() -> None:
             _log.warning("failed to load user_namespaces: %s", exc)
     finally:
         _user_ns_cache_loaded = True
+        _user_ns_cache_time = time.monotonic()
 
 
 async def get_user_namespace_ids(namespace_id: str) -> list[str]:
@@ -405,7 +414,7 @@ async def get_user_namespace_ids(namespace_id: str) -> list[str]:
     """
     if _is_user_ns_disabled():
         return [namespace_id]
-    if not _user_ns_cache_loaded:
+    if not _user_ns_cache_loaded or (time.monotonic() - _user_ns_cache_time) >= _USER_NS_CACHE_REFRESH_SECONDS:
         await _load_user_ns_cache()
     return _user_ns_cache.get(namespace_id, [namespace_id])
 

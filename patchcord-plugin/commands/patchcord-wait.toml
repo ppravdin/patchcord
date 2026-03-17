@@ -1,0 +1,1 @@
+prompt = "Enter listening mode. Call wait_for_message() to block until a message arrives. When one arrives: do the work, reply with what you did, then call wait_for_message() again to keep listening."

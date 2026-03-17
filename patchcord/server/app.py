@@ -170,16 +170,24 @@ async def openai_verification(_: Request) -> Response:
     return PlainTextResponse(token, media_type="text/plain")
 
 
+_CLEANUP_TOKEN = os.environ.get("PATCHCORD_CLEANUP_TOKEN", "").strip()
+
+
 async def _is_valid_bearer(token: str) -> bool:
     """Check if a bearer token is valid (DB lookup)."""
     return (await lookup_bearer_token(token)) is not None
 
 
+def _is_cleanup_authorized(token: str) -> bool:
+    """Cleanup requires a dedicated PATCHCORD_CLEANUP_TOKEN, not any agent token."""
+    return bool(_CLEANUP_TOKEN) and token == _CLEANUP_TOKEN
+
+
 @mcp.custom_route("/api/cleanup", methods=["POST"], include_in_schema=False)
 async def api_cleanup(request: Request) -> Response:
-    """Cleanup old messages and attachments. Requires bearer token auth."""
+    """Cleanup old messages and attachments. Requires dedicated cleanup token."""
     auth = (request.headers.get("authorization") or "").removeprefix("Bearer ").strip()
-    if not auth or not await _is_valid_bearer(auth):
+    if not auth or not _is_cleanup_authorized(auth):
         return JSONResponse({"status": "error", "message": "Unauthorized"}, status_code=401)
     dry_run = request.query_params.get("dry_run", "").lower() in ("1", "true", "yes")
     max_age = CLEANUP_MAX_AGE_DAYS
@@ -194,9 +202,9 @@ async def api_cleanup(request: Request) -> Response:
 
 @mcp.custom_route("/api/cleanup/oauth", methods=["POST"], include_in_schema=False)
 async def api_cleanup_oauth(request: Request) -> Response:
-    """Cleanup expired OAuth tokens and auth codes. Manual only — never runs automatically."""
+    """Cleanup expired OAuth tokens and auth codes. Requires dedicated cleanup token."""
     auth = (request.headers.get("authorization") or "").removeprefix("Bearer ").strip()
-    if not auth or not await _is_valid_bearer(auth):
+    if not auth or not _is_cleanup_authorized(auth):
         return JSONResponse({"status": "error", "message": "Unauthorized"}, status_code=401)
     dry_run = request.query_params.get("dry_run", "").lower() in ("1", "true", "yes")
     results = await _run_oauth_cleanup(dry_run=dry_run)
@@ -408,6 +416,10 @@ class RateLimitMiddleware:
                 asyncio.ensure_future(self._delete_ban_from_db(token_hash))
 
         # Sliding window counter (uses monotonic clock — not persisted)
+        # Evict stale entries to prevent memory growth from random tokens
+        if len(self._counters) > 10000:
+            cutoff = time.monotonic() - 120
+            self._counters = {k: v for k, v in self._counters.items() if v[1] > cutoff}
         mono_now = time.monotonic()
         count, window_start = self._counters.get(token, (0, mono_now))
         if mono_now - window_start >= 60:

@@ -1,0 +1,1 @@
+prompt = "Call inbox() to check for pending patchcord messages. Reply to all immediately — do the work first, then reply with what you did. After replying, call wait_for_message() to stay responsive."
