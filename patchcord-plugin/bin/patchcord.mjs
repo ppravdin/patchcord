@@ -63,11 +63,11 @@ if (cmd === "help" || cmd === "--help" || cmd === "-h") {
   console.log(`patchcord — agent messaging for AI coding agents
 
 Usage:
-  npx patchcord@latest              Full setup (global + project) — run in your project folder
-  npx patchcord@latest --full       Same + full statusline (model, context%, git)
-  npx patchcord@latest skill apply  Fetch custom skill from web console
-
-That's it. One command does everything.`);
+  npx patchcord@latest                                    Setup via browser (patchcord.dev)
+  npx patchcord@latest --token <token>                    Self-hosted / CI setup
+  npx patchcord@latest --token <token> --server <url>     Self-hosted with custom server
+  npx patchcord@latest --full                             Same + full statusline
+  npx patchcord@latest skill apply                        Fetch custom skill from web console`);
   process.exit(0);
 }
 
@@ -77,8 +77,8 @@ if (cmd === "plugin-path") {
 }
 
 // ── main flow: global setup + project setup (or just install/agent for back-compat) ──
-if (!cmd || cmd === "install" || cmd === "agent") {
-  const flags = process.argv.slice(3);
+if (!cmd || cmd === "install" || cmd === "agent" || cmd === "--token" || cmd === "--no-browser" || cmd === "--server") {
+  const flags = cmd?.startsWith("--") ? process.argv.slice(2) : process.argv.slice(3);
   const fullStatusline = flags.includes("--full");
   const { readFileSync, writeFileSync } = await import("fs");
 
@@ -252,254 +252,59 @@ if (!cmd || cmd === "install" || cmd === "agent") {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   const ask = (q) => new Promise((resolve) => rl.question(q, resolve));
 
-  console.log(`\n${bold}Which tool are you setting up?${r}\n`);
-  console.log(`  ${cyan}1.${r} Claude Code`);
-  console.log(`  ${cyan}2.${r} Codex CLI`);
-  console.log(`  ${cyan}3.${r} Cursor`);
-  console.log(`  ${cyan}4.${r} Windsurf`);
-  console.log(`  ${cyan}5.${r} Gemini CLI`);
-  console.log(`  ${cyan}6.${r} VS Code (Copilot)`);
-  console.log(`  ${cyan}7.${r} Zed`);
-  console.log(`  ${cyan}8.${r} OpenCode\n`);
+  // Tool picker only shown for --token bypass. Browser flow gets tool from web.
+  let choice = "";
 
-  const choice = (await ask(`${dim}Choose (1-8):${r} `)).trim();
-  const isCodex = choice === "2";
-  const isCursor = choice === "3";
-  const isWindsurf = choice === "4";
-  const isGemini = choice === "5";
-  const isVSCode = choice === "6";
-  const isZed = choice === "7";
-  const isOpenCode = choice === "8";
-
-  if (!["1", "2", "3", "4", "5", "6", "7", "8"].includes(choice)) {
-    console.error("Invalid choice.");
-    rl.close();
-    process.exit(1);
-  }
-
-  if (isWindsurf || isGemini || isZed) {
-    const toolLabel = isZed ? "Zed" : isWindsurf ? "Windsurf" : "Gemini CLI";
-    console.log(`\n  ${yellow}Note: ${toolLabel} uses global config — applies to all projects.${r}`);
-  } else {
-    const folderType = detectFolder(cwd);
-    const folderName = cwd.split("/").pop() || cwd.split("\\").pop() || cwd;
-
-    if (folderType === "HOME") {
-      console.log(`\n  ${red}✗ You're in your home folder.${r}`);
-      console.log(`  ${yellow}Patchcord must be installed inside a project folder —${r}`);
-      console.log(`  ${yellow}the folder where your agent actually runs.${r}`);
-      console.log(`  ${dim}cd into your project first, then run this again.${r}`);
-      rl.close();
-      process.exit(0);
-    } else if (folderType === "CONTAINER") {
-      console.log(`\n  ${yellow}⚠ This looks like a projects container, not a project.${r}`);
-      console.log(`  ${dim}${cwd}${r}`);
-      console.log(`  ${dim}Patchcord should be installed inside a project, not the folder above it.${r}`);
-      const proceed = (await ask(`  ${dim}Set up here anyway? (y/N):${r} `)).trim().toLowerCase();
-      if (proceed !== "y" && proceed !== "yes") {
-        console.log(`  ${dim}cd into your project and run this again.${r}`);
-        rl.close();
-        process.exit(0);
-      }
-    }
-
-    console.log(`\n  ${dim}Agent identity:${r} ${bold}${folderName}${r}`);
-    console.log(`  ${dim}Folder:${r} ${cwd}`);
-  }
+  const CLIENT_TYPE_MAP = {
+    "claude_code": "1", "codex": "2", "cursor": "3", "windsurf": "4",
+    "gemini": "5", "vscode": "6", "zed": "7", "opencode": "8",
+  };
 
 
-  // Check if already configured
-  if (choice === "1") {
-    const mcpPath = join(cwd, ".mcp.json");
-    if (existsSync(mcpPath)) {
-      try {
-        const existing = JSON.parse(readFileSync(mcpPath, "utf-8"));
-        if (existing.mcpServers?.patchcord) {
-          console.log(`\n  ${yellow}⚠ Claude Code already configured in this project${r}`);
-          console.log(`  ${dim}${mcpPath}${r}`);
-          const replace = (await ask(`  ${dim}Replace? (y/N):${r} `)).trim().toLowerCase();
-          if (replace !== "y" && replace !== "yes") {
-            console.log("Keeping existing config.");
-            rl.close();
-            process.exit(0);
-          }
-        }
-      } catch {}
-    }
-  } else if (isCursor) {
-    const cursorPath = join(cwd, ".cursor", "mcp.json");
-    if (existsSync(cursorPath)) {
-      try {
-        const existing = JSON.parse(readFileSync(cursorPath, "utf-8"));
-        if (existing.mcpServers?.patchcord) {
-          console.log(`\n  ${yellow}⚠ Cursor already configured in this project${r}`);
-          console.log(`  ${dim}${cursorPath}${r}`);
-          const replace = (await ask(`  ${dim}Replace? (y/N):${r} `)).trim().toLowerCase();
-          if (replace !== "y" && replace !== "yes") {
-            console.log("Keeping existing config.");
-            rl.close();
-            process.exit(0);
-          }
-        }
-      } catch {}
-    }
-    // Warn about global config conflict
-    const globalCursor = join(HOME, ".cursor", "mcp.json");
-    if (existsSync(globalCursor)) {
-      try {
-        const global = JSON.parse(readFileSync(globalCursor, "utf-8"));
-        if (global.mcpServers?.patchcord) {
-          console.log(`\n  ${yellow}⚠ Patchcord is also configured globally in Cursor${r}`);
-          console.log(`  ${dim}${globalCursor}${r}`);
-          console.log(`  ${yellow}Having both global AND per-project will cause duplicate tool calls.${r}`);
-          console.log(`  ${dim}Remove patchcord from global config: Cursor Settings → MCP → remove patchcord${r}`);
-        }
-      } catch {}
-    }
-  } else if (isWindsurf) {
-    const wsPath = join(HOME, ".codeium", "windsurf", "mcp_config.json");
-    if (existsSync(wsPath)) {
-      try {
-        const content = readFileSync(wsPath, "utf-8").trim();
-        const existing = content ? JSON.parse(content) : {};
-        if (existing.mcpServers?.patchcord) {
-          console.log(`\n  ${yellow}⚠ Windsurf already configured${r}`);
-          console.log(`  ${dim}${wsPath}${r}`);
-          const replace = (await ask(`  ${dim}Replace? (y/N):${r} `)).trim().toLowerCase();
-          if (replace !== "y" && replace !== "yes") {
-            console.log("Keeping existing config.");
-            rl.close();
-            process.exit(0);
-          }
-        }
-      } catch {}
-    }
-  } else if (isGemini) {
-    const geminiPath = join(HOME, ".gemini", "settings.json");
-    if (existsSync(geminiPath)) {
-      try {
-        const existing = safeReadJson(geminiPath) || {};
-        if (existing.mcpServers?.patchcord) {
-          console.log(`\n  ${yellow}⚠ Gemini CLI already configured${r}`);
-          console.log(`  ${dim}${geminiPath}${r}`);
-          const replace = (await ask(`  ${dim}Replace? (y/N):${r} `)).trim().toLowerCase();
-          if (replace !== "y" && replace !== "yes") {
-            console.log("Keeping existing config.");
-            rl.close();
-            process.exit(0);
-          }
-        }
-      } catch {}
-    }
-  } else if (isVSCode) {
-    const vscodePath = join(cwd, ".vscode", "mcp.json");
-    if (existsSync(vscodePath)) {
-      try {
-        const existing = JSON.parse(readFileSync(vscodePath, "utf-8"));
-        if (existing.servers?.patchcord) {
-          console.log(`\n  ${yellow}⚠ VS Code already configured in this project${r}`);
-          console.log(`  ${dim}${vscodePath}${r}`);
-          const replace = (await ask(`  ${dim}Replace? (y/N):${r} `)).trim().toLowerCase();
-          if (replace !== "y" && replace !== "yes") {
-            console.log("Keeping existing config.");
-            rl.close();
-            process.exit(0);
-          }
-        }
-      } catch {}
-    }
-  } else if (isZed) {
-    const zedPath = process.platform === "darwin"
-      ? join(HOME, "Library", "Application Support", "Zed", "settings.json")
-      : join(HOME, ".config", "zed", "settings.json");
-    if (existsSync(zedPath)) {
-      try {
-        const existing = safeReadJson(zedPath) || {};
-        if (existing.context_servers?.patchcord) {
-          console.log(`\n  ${yellow}⚠ Zed already configured${r}`);
-          console.log(`  ${dim}${zedPath}${r}`);
-          const replace = (await ask(`  ${dim}Replace? (y/N):${r} `)).trim().toLowerCase();
-          if (replace !== "y" && replace !== "yes") {
-            console.log("Keeping existing config.");
-            rl.close();
-            process.exit(0);
-          }
-        }
-      } catch {}
-    }
-  } else if (isOpenCode) {
-    const ocPath = join(cwd, "opencode.json");
-    if (existsSync(ocPath)) {
-      try {
-        const existing = JSON.parse(readFileSync(ocPath, "utf-8"));
-        if (existing.mcp?.patchcord) {
-          console.log(`\n  ${yellow}⚠ OpenCode already configured in this project${r}`);
-          console.log(`  ${dim}${ocPath}${r}`);
-          const replace = (await ask(`  ${dim}Replace? (y/N):${r} `)).trim().toLowerCase();
-          if (replace !== "y" && replace !== "yes") {
-            console.log("Keeping existing config.");
-            rl.close();
-            process.exit(0);
-          }
-        }
-      } catch {}
-    }
-  } else if (isCodex) {
-    // Check global config for stale patchcord MCP — user may have run installer in ~ by mistake
-    const globalCodexConfig = join(HOME, ".codex", "config.toml");
-    if (existsSync(globalCodexConfig)) {
-      const globalContent = readFileSync(globalCodexConfig, "utf-8");
-      if (globalContent.includes("[mcp_servers.patchcord]")) {
-        console.log(`\n  ${red}⚠ Patchcord is in your GLOBAL Codex config!${r}`);
-        console.log(`  ${dim}${globalCodexConfig}${r}`);
-        console.log(`  ${yellow}This overrides per-project config and causes conflicts.${r}`);
-        const cleanGlobal = (await ask(`  ${dim}Remove patchcord from global config? (Y/n):${r} `)).trim().toLowerCase();
-        if (cleanGlobal !== "n" && cleanGlobal !== "no") {
-          const cleaned = globalContent.replace(/\[mcp_servers\.patchcord\]\n(?:(?!\[)[^\n]*\n?)*/g, "").replace(/\n{3,}/g, "\n\n").trim();
-          writeFileSync(globalCodexConfig, cleaned + "\n");
-          console.log(`  ${green}✓${r} Removed from global config`);
-        }
-      }
-    }
-    const configPath = join(cwd, ".codex", "config.toml");
-    if (existsSync(configPath)) {
-      const content = readFileSync(configPath, "utf-8");
-      if (content.includes("[mcp_servers.patchcord]")) {
-        console.log(`\n  ${yellow}⚠ Codex CLI already configured in this project${r}`);
-        console.log(`  ${dim}${configPath}${r}`);
-        const replace = (await ask(`  ${dim}Replace? (y/N):${r} `)).trim().toLowerCase();
-        if (replace !== "y" && replace !== "yes") {
-          console.log("Keeping existing config.");
-          rl.close();
-          process.exit(0);
-        }
-      }
-    }
-  }
 
   let token = "";
   let identity = "";
   let serverUrl = "https://mcp.patchcord.dev";
+  let apiUrl = "https://api.patchcord.dev";
+  let clientType = "";
 
-  console.log(`\n${dim}Get your token at:${r} ${cyan}https://patchcord.dev/console${r}`);
-  console.log(`${dim}Create a project → Add agent → Copy token${r}`);
-
-  while (!identity) {
-    token = (await ask(`\n${bold}Paste your agent token:${r} `)).trim();
-
-    if (!token) {
-      console.error("Token is required. Get one from your patchcord dashboard.");
+  // --server flag for self-hosters
+  const serverFlag = flags.find(f => f.startsWith("--server="))?.split("=")[1]
+    || (flags.includes("--server") ? flags[flags.indexOf("--server") + 1] : "");
+  if (serverFlag) {
+    if (!isSafeUrl(serverFlag)) {
+      console.error("Invalid server URL. Must start with https:// or http://");
       rl.close();
       process.exit(1);
     }
+    serverUrl = serverFlag.replace(/\/+$/, "");
+    apiUrl = serverUrl;
+  }
 
+  // --token bypass for power users / CI / self-hosters
+  const tokenFlag = flags.find(f => f.startsWith("--token="))?.split("=")[1]
+    || (flags.includes("--token") ? flags[flags.indexOf("--token") + 1] : "");
+
+  if (tokenFlag) {
+    // --token bypass: need tool picker in terminal
+    console.log(`\n${bold}Which tool are you setting up?${r}\n`);
+    console.log(`  ${cyan}1.${r} Claude Code   ${cyan}5.${r} Gemini CLI`);
+    console.log(`  ${cyan}2.${r} Codex CLI     ${cyan}6.${r} VS Code`);
+    console.log(`  ${cyan}3.${r} Cursor        ${cyan}7.${r} Zed`);
+    console.log(`  ${cyan}4.${r} Windsurf      ${cyan}8.${r} OpenCode\n`);
+    choice = (await ask(`${dim}Choose (1-8):${r} `)).trim();
+    if (!["1","2","3","4","5","6","7","8"].includes(choice)) {
+      console.error("Invalid choice.");
+      rl.close();
+      process.exit(1);
+    }
+    token = tokenFlag.trim();
     if (!isSafeToken(token)) {
-      console.log(`  ${red}✗${r} Invalid token format`);
+      console.error("Invalid token format.");
       rl.close();
       process.exit(1);
     }
-
-    console.log("Validating...");
+    console.log("Validating token...");
     const validateResp = run(`curl -sf --max-time 5 -H "Authorization: Bearer ${token}" "${serverUrl}/api/inbox?limit=0"`);
     if (validateResp) {
       try {
@@ -509,29 +314,175 @@ if (!cmd || cmd === "install" || cmd === "agent") {
       } catch {}
     }
     if (!identity) {
-      console.log(`  ${red}✗${r} Token not recognized`);
-      const retry = (await ask(`${dim}Try again? (Y/n):${r} `)).trim().toLowerCase();
-      if (retry === "n" || retry === "no") {
-        rl.close();
+      console.error("Token not recognized.");
+      rl.close();
+      process.exit(1);
+    }
+    rl.close();
+  } else {
+    // Browser connect flow
+    rl.close();
+
+    function canOpenBrowser() {
+      if (process.env.SSH_CLIENT || process.env.SSH_TTY) return false;
+      if (!process.env.DISPLAY && process.platform === "linux") return false;
+      if (flags.includes("--no-browser")) return false;
+      return true;
+    }
+
+    function openBrowser(url) {
+      try {
+        if (process.platform === "darwin") execSync(`open "${url}"`, { stdio: "ignore" });
+        else if (process.platform === "win32") execSync(`start "" "${url}"`, { stdio: "ignore" });
+        else execSync(`xdg-open "${url}"`, { stdio: "ignore" });
+        return true;
+      } catch { return false; }
+    }
+
+    // Create session
+    let sessionId = "";
+    try {
+      const resp = run(`curl -sf --max-time 10 -X POST "${apiUrl}/api/connect/session" -H "Content-Type: application/json" -d '{"tool":"${choice}"}'`);
+      if (resp) {
+        const data = JSON.parse(resp);
+        sessionId = data.session_id || "";
+      }
+    } catch {}
+
+    if (!sessionId) {
+      // Fallback to manual token paste if connect API unavailable
+      console.log(`\n${dim}Browser connect unavailable. Paste token manually.${r}`);
+      console.log(`${dim}Get your token at:${r} ${cyan}https://patchcord.dev/console${r}`);
+      const { createInterface: createRL2 } = await import("readline");
+      const rl2 = createRL2({ input: process.stdin, output: process.stdout });
+      const ask2 = (q) => new Promise((resolve) => rl2.question(q, resolve));
+      token = (await ask2(`\n${bold}Paste your agent token:${r} `)).trim();
+      rl2.close();
+      if (!token || !isSafeToken(token)) {
+        console.error("Invalid token.");
         process.exit(1);
+      }
+      const validateResp = run(`curl -sf --max-time 5 -H "Authorization: Bearer ${token}" "${serverUrl}/api/inbox?limit=0"`);
+      if (validateResp) {
+        try {
+          const data = JSON.parse(validateResp);
+          identity = `${data.agent_id}@${data.namespace_id}`;
+          console.log(`  ${green}✓${r} ${bold}${identity}${r}`);
+        } catch {}
+      }
+      if (!identity) {
+        console.error("Token not recognized.");
+        process.exit(1);
+      }
+    } else {
+      // Open browser or show URL
+      const connectUrl = `https://patchcord.dev/connect?session=${sessionId}`;
+
+      if (canOpenBrowser()) {
+        const opened = openBrowser(connectUrl);
+        if (opened) {
+          console.log(`\n  ${green}✓${r} Browser opened.`);
+        } else {
+          console.log(`\n  ${dim}Could not open browser. Open this URL manually:${r}`);
+          console.log(`\n  ${cyan}${connectUrl}${r}\n`);
+        }
+      } else {
+        console.log(`\n  ${dim}Can't open a browser on this machine.${r}`);
+        console.log(`  ${dim}Open this URL on any device:${r}`);
+        console.log(`\n  ${cyan}${connectUrl}${r}\n`);
+      }
+
+      console.log(`  ${dim}⏳ Waiting for you to complete setup in the browser...${r}`);
+      console.log(`  ${dim}   (press Ctrl+C to cancel)${r}\n`);
+
+      // SSE listener — wait for session completion
+      const http = await import("https");
+      const sseResult = await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error("Session expired. Run npx patchcord@latest again."));
+        }, 5 * 60 * 1000);
+
+        function connect() {
+          const req = http.get(`${apiUrl}/api/connect/session/${sessionId}/wait`, {
+            headers: { "Accept": "text/event-stream" },
+          }, (res) => {
+            if (res.statusCode !== 200) {
+              clearTimeout(timeout);
+              reject(new Error(`Server returned ${res.statusCode}`));
+              return;
+            }
+            let buffer = "";
+            res.on("data", (chunk) => {
+              buffer += chunk.toString();
+              const lines = buffer.split("\n");
+              buffer = lines.pop();
+              for (const line of lines) {
+                if (line.startsWith("data: ")) {
+                  try {
+                    const payload = JSON.parse(line.slice(6));
+                    if (payload.error) {
+                      clearTimeout(timeout);
+                      reject(new Error(payload.error));
+                      return;
+                    }
+                    if (payload.token) {
+                      clearTimeout(timeout);
+                      resolve(payload);
+                      return;
+                    }
+                  } catch {}
+                }
+              }
+            });
+            res.on("end", () => {
+              // Connection dropped — retry
+              setTimeout(connect, 2000);
+            });
+            res.on("error", () => {
+              setTimeout(connect, 2000);
+            });
+          });
+          req.on("error", () => {
+            setTimeout(connect, 2000);
+          });
+        }
+
+        connect();
+      });
+
+      token = sseResult.token;
+      identity = `${sseResult.agent_id}@${sseResult.namespace_id}`;
+      clientType = sseResult.client_type || sseResult.tool || "";
+      choice = CLIENT_TYPE_MAP[clientType] || "";
+      console.log(`  ${green}✓${r} ${bold}${identity}${r} connected.`);
+
+      if (!choice) {
+        // Backend didn't send tool type — ask in terminal
+        const { createInterface: createRL3 } = await import("readline");
+        const rl3 = createRL3({ input: process.stdin, output: process.stdout });
+        const ask3 = (q) => new Promise((resolve) => rl3.question(q, resolve));
+        console.log(`\n${bold}Which tool are you setting up?${r}\n`);
+        console.log(`  ${cyan}1.${r} Claude Code   ${cyan}5.${r} Gemini CLI`);
+        console.log(`  ${cyan}2.${r} Codex CLI     ${cyan}6.${r} VS Code`);
+        console.log(`  ${cyan}3.${r} Cursor        ${cyan}7.${r} Zed`);
+        console.log(`  ${cyan}4.${r} Windsurf      ${cyan}8.${r} OpenCode\n`);
+        choice = (await ask3(`${dim}Choose (1-8):${r} `)).trim();
+        rl3.close();
+        if (!["1","2","3","4","5","6","7","8"].includes(choice)) {
+          console.error("Invalid choice.");
+          process.exit(1);
+        }
       }
     }
   }
 
-  const customUrl = (await ask(`\n${dim}Custom server URL? (y/N):${r} `)).trim().toLowerCase();
-  if (customUrl === "y" || customUrl === "yes") {
-    const url = (await ask("Server URL: ")).trim();
-    if (url) {
-      if (!isSafeUrl(url)) {
-        console.error("Invalid URL. Must start with https:// or http://");
-        rl.close();
-        process.exit(1);
-      }
-      serverUrl = url;
-    }
-  }
-
-  rl.close();
+  const isCodex = choice === "2";
+  const isCursor = choice === "3";
+  const isWindsurf = choice === "4";
+  const isGemini = choice === "5";
+  const isVSCode = choice === "6";
+  const isZed = choice === "7";
+  const isOpenCode = choice === "8";
 
   const hostname = run("hostname -s") || run("hostname") || "unknown";
 
@@ -695,7 +646,9 @@ if (!cmd || cmd === "install" || cmd === "agent") {
     // Codex: copy skill + write config + install slash commands
     const dest = join(cwd, ".agents", "skills", "patchcord");
     mkdirSync(dest, { recursive: true });
-    cpSync(join(pluginRoot, "skills", "inbox", "SKILL.md"), join(dest, "SKILL.md"));
+    const skillSrc = readFileSync(join(pluginRoot, "skills", "inbox", "SKILL.md"), "utf-8");
+    const codexNote = `\nIMPORTANT: Use the "patchcord-codex" MCP server for all patchcord tools (e.g. patchcord-codex.inbox, patchcord-codex.send_message). Do NOT use codex_apps.patchcord_* tools — they use the wrong identity.\n`;
+    writeFileSync(join(dest, "SKILL.md"), skillSrc.replace(/^(---\n[\s\S]*?---\n)/, `$1${codexNote}\n`));
 
     const codexDir = join(cwd, ".codex");
     mkdirSync(codexDir, { recursive: true });
@@ -703,7 +656,7 @@ if (!cmd || cmd === "install" || cmd === "agent") {
     let existing = existsSync(configPath) ? readFileSync(configPath, "utf-8") : "";
     // Remove old patchcord config block if present
     existing = existing.replace(/\[mcp_servers\.patchcord\]\n(?:(?!\[)[^\n]*\n?)*/g, "").replace(/\n{3,}/g, "\n\n").trim();
-    existing = existing.trimEnd() + `\n\n[mcp_servers.patchcord]\nurl = "${serverUrl}/mcp/bearer"\nhttp_headers = { "Authorization" = "Bearer ${token}", "X-Patchcord-Machine" = "${hostname}" }\n`;
+    existing = existing.trimEnd() + `\n\n[mcp_servers.patchcord-codex]\nurl = "${serverUrl}/mcp/bearer"\nhttp_headers = { "Authorization" = "Bearer ${token}", "X-Patchcord-Machine" = "${hostname}" }\n`;
     writeFileSync(configPath, existing);
     // Clean up any PATCHCORD_TOKEN we previously wrote to .env
     const envPath = join(cwd, ".env");
@@ -715,11 +668,11 @@ if (!cmd || cmd === "install" || cmd === "agent") {
         console.log(`  ${green}✓${r} Cleaned PATCHCORD_TOKEN from .env`);
       }
     }
-    // Slash commands (.codex/prompts/)
+    // Slash commands (.codex/prompts/) — plain text, no YAML frontmatter
     const codexPromptsDir = join(codexDir, "prompts");
     mkdirSync(codexPromptsDir, { recursive: true });
-    cpSync(join(pluginRoot, "skills", "inbox", "SKILL.md"), join(codexPromptsDir, "patchcord.md"));
-    cpSync(join(pluginRoot, "skills", "wait", "SKILL.md"), join(codexPromptsDir, "patchcord-wait.md"));
+    writeFileSync(join(codexPromptsDir, "patchcord.md"), `Check patchcord inbox using the patchcord-codex MCP server. Call patchcord-codex.inbox() to see pending messages and who is online. Reply to all pending messages immediately — do the work first, then reply with what you did. After replying, call patchcord-codex.wait_for_message() to stay responsive for follow-ups. Do NOT use codex_apps tools.\n`);
+    writeFileSync(join(codexPromptsDir, "patchcord-wait.md"), `Enter patchcord listening mode using the patchcord-codex MCP server. Call patchcord-codex.wait_for_message() to block until a message arrives. When one arrives, do the work described, reply with what you did, then call patchcord-codex.wait_for_message() again. Do NOT use codex_apps tools.\n`);
     console.log(`\n  ${green}✓${r} Codex configured: ${dim}${configPath}${r}`);
     console.log(`  ${green}✓${r} Slash commands: ${dim}/patchcord${r}, ${dim}/patchcord-wait${r}`);
   } else {
@@ -776,7 +729,7 @@ if (!cmd || cmd === "install" || cmd === "agent") {
     console.log(`  ${dim}cd into another project and run${r} ${bold}npx patchcord@latest${r} ${dim}there.${r}`);
   }
 
-  console.log(`\n${dim}Restart your ${toolName} session, then run:${r} ${bold}inbox()${r}`);
+  console.log(`\n${dim}Restart your ${toolName} session, then say:${r} ${bold}check inbox${r}`);
   process.exit(0);
 }
 

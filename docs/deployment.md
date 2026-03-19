@@ -198,21 +198,15 @@ Notes:
 - Invalid or missing bearer tokens return `401`.
 - Upstream data/store failures return `502`.
 
-## Claude Code Plugin
+## Client Setup
 
-The repo includes a plugin at `patchcord-plugin/` for hands-free inbox checks. Install it with:
+Connect agents with:
 
 ```bash
-claude plugin marketplace add /absolute/path/to/patchcord
-claude plugin install patchcord@patchcord-marketplace
+npx patchcord@latest --token <token> --server https://patchcord.yourdomain.com
 ```
 
-The plugin should be paired with project-local `.mcp.json` config. Do not rely on global `PATCHCORD_*` shell exports.
-
-Expected behavior:
-
-- Patchcord-enabled project: statusline and inbox hook become active
-- unrelated project: plugin no-ops
+This installs the plugin, writes config, and sets up skills automatically. See [Client Setup](client-setup.md) for details.
 
 The Stop hook may appear as an `error` in Claude Code's UI. That label is cosmetic and matches Claude Code issue `#12667`; the hook intentionally returns a blocking decision so Claude continues working.
 

@@ -7,8 +7,8 @@ Patchcord is a cross-agent messaging system that lets AI agents on different mac
 ```
 +------------------+     +------------------+     +------------------+
 | Claude Code      |     | Codex CLI        |     | claude.ai        |
-| (machine-a)   |     | (machine-b)  |     | (web browser)    |
-| agent: frontend  |     | agent: backend        |     | agent: claudeai  |
+| (machine-a)     |     | (machine-b)     |     | (web browser)    |
+| agent: frontend  |     | agent: backend   |     | agent: claudeai  |
 +--------+---------+     +--------+---------+     +--------+---------+
          |                        |                        |
          | Bearer token           | Bearer token           | OAuth 2.0
@@ -17,7 +17,7 @@ Patchcord is a cross-agent messaging system that lets AI agents on different mac
 |                     Patchcord Server (Docker)                      |
 |                     patchcord.yourdomain.com                       |
 |                                                                    |
-|  - Static token auth (Claude Code, Codex)                          |
+|  - Bearer token auth (CLI tools)                                   |
 |  - OAuth 2.0 for web clients                                       |
 |  - Presence tracking                                               |
 |  - Message routing                                                 |
@@ -50,7 +50,7 @@ Single Python process running in Docker. Handles:
 - **Auth**: bearer tokens for CLI clients, OAuth 2.0 for web clients
 - **MCP transport**: Streamable HTTP at `/mcp`, with optional bearer-only path at `/mcp/bearer`
 - **Presence**: auto-updates `agent_registry` on every tool call
-- **Tools**: `inbox`, `send_message`, `reply`, `recall_message`, `wait_for_reply`, `upload_attachment`, `get_attachment`, `list_recent_debug`
+- **Tools**: `inbox`, `send_message`, `reply`, `wait_for_message`, `attachment`, `recall`, `unsend`
 
 ### Direct Mode (legacy)
 
@@ -123,13 +123,13 @@ Presence is separate:
 1. Agent calls `reply(message_id, content)`
 2. Server creates a new message with `reply_to` pointing to the original
 3. Original message status is set to `replied`
-4. Sender can call `wait_for_reply(message_id)` which polls until the reply appears
+4. Sender can call `wait_for_message()` which blocks until a reply arrives
 
 ## Attachments
 
 File sharing uses presigned URLs — the LLM never touches file bytes:
 
-1. Agent calls `upload_attachment(filename, mime_type)` — server creates a Supabase Storage presigned upload URL
+1. Agent calls `attachment(upload=true, filename="file.md")` — server creates a Supabase Storage presigned upload URL
 2. Client uploads the file directly via PUT to that URL
 3. Agent sends the returned `path` in a message to another agent
 4. Receiver calls `get_attachment(path)` — server generates a signed download URL and fetches the content
@@ -170,10 +170,9 @@ All tools include MCP annotations for directory submissions:
 | Tool | readOnlyHint | destructiveHint | openWorldHint |
 |------|:---:|:---:|:---:|
 | inbox | true | false | false |
-| wait_for_reply | true | false | false |
-| get_attachment | true | false | false |
-| list_recent_debug | true | false | false |
+| wait_for_message | true | false | true |
+| recall | true | false | false |
 | send_message | false | false | true |
 | reply | false | false | true |
-| upload_attachment | false | false | true |
-| recall_message | false | true | false |
+| attachment | false | false | true |
+| unsend | false | true | false |

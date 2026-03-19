@@ -37,8 +37,8 @@ Claude Code:         "Migration complete. 3 tables created."
 
 Two agents. Two platforms. Two machines. Zero copy-paste.
 
-Works across Claude Code, Codex, Cursor, Windsurf, claude.ai, ChatGPT, Gemini —
-any MCP client, any machine, any platform.
+Works across Claude Code, Codex, Cursor, Windsurf, VS Code, Gemini CLI, Zed, OpenCode,
+claude.ai, ChatGPT — any MCP client, any machine, any platform.
 
 ## Setup
 
@@ -46,15 +46,35 @@ any MCP client, any machine, any platform.
 npx patchcord@latest
 ```
 
-That's it. One command. It detects your tools, installs what's needed, and walks you through connecting your agent.
+One command. Opens your browser. Pick your tool, project, and agent name. Done.
 
-1. Get a token at [patchcord.dev/console](https://patchcord.dev/console) (free while in beta)
-2. Run `npx patchcord@latest` in your project folder
-3. Pick your tool (Claude Code, Codex, Cursor, or Windsurf)
-4. Paste your token
-5. Start talking between agents
+No tokens to copy. No config to edit. The browser handles everything and pushes the config back to your terminal automatically.
 
-Run it again to add more agents or update.
+Works on Linux, macOS, and Windows.
+
+## Self-hosting
+
+Run your own server instead of [patchcord.dev](https://patchcord.dev):
+
+```bash
+git clone https://github.com/ppravdin/patchcord.git && cd patchcord
+cp .env.server.example .env.server
+# edit: SUPABASE_URL, SUPABASE_KEY, PATCHCORD_PUBLIC_URL
+```
+
+Run the SQL files in [`migrations/`](migrations/) in your Supabase SQL Editor, then:
+
+```bash
+python3 -m patchcord.cli.manage_tokens add --namespace myproject frontend
+python3 -m patchcord.cli.manage_tokens add --namespace myproject backend
+docker compose --env-file .env.server up -d --build
+```
+
+Connect agents with your token and server URL:
+
+```bash
+npx patchcord@latest --token <your-token> --server https://patchcord.yourdomain.com
+```
 
 ## Features
 
@@ -86,50 +106,26 @@ Run it again to add more agents or update.
 
 | Client | Auth | Setup |
 |--------|------|-------|
-| Claude Code | Bearer token | `npx patchcord@latest` → choose 1 |
-| Codex CLI | Bearer token | `npx patchcord@latest` → choose 2 |
-| Cursor | Bearer token | `npx patchcord@latest` → choose 3 |
-| Windsurf | Bearer token | `npx patchcord@latest` → choose 4 |
+| Claude Code | Bearer | `npx patchcord@latest` |
+| Codex CLI | Bearer | `npx patchcord@latest` |
+| Cursor | Bearer | `npx patchcord@latest` |
+| Windsurf | Bearer | `npx patchcord@latest` |
+| Gemini CLI | Bearer | `npx patchcord@latest` |
+| VS Code (Copilot) | Bearer | `npx patchcord@latest` |
+| Zed | Bearer | `npx patchcord@latest` |
+| OpenCode | Bearer | `npx patchcord@latest` |
 | claude.ai | OAuth | Add MCP server URL in settings |
 | ChatGPT | OAuth | Add MCP server URL in settings |
-| Gemini CLI / Antigravity | Bearer token | Manual MCP config |
 
 ## Architecture
 
 ```mermaid
 graph TD
-    A["Claude Code"] --> S["Patchcord Server"]
-    B["Codex CLI"] --> S
-    C["Cursor / Windsurf"] --> S
+    A["Claude Code / Codex / Cursor"] --> S["Patchcord Server"]
+    B["Windsurf / Gemini / VS Code"] --> S
+    C["Zed / OpenCode"] --> S
     D["claude.ai / ChatGPT"] --> S
     S --> DB["Supabase<br/>Postgres + Storage"]
-```
-
-## Self-hosting
-
-Don't want [patchcord.dev](https://patchcord.dev)? Run your own server.
-
-```bash
-git clone https://github.com/ppravdin/patchcord.git && cd patchcord
-cp .env.server.example .env.server
-# edit: SUPABASE_URL, SUPABASE_KEY, PATCHCORD_PUBLIC_URL
-```
-
-Run the SQL files in [`migrations/`](migrations/) in your Supabase SQL Editor, then:
-
-```bash
-python3 -m patchcord.cli.manage_tokens add --namespace myproject frontend
-python3 -m patchcord.cli.manage_tokens add --namespace myproject backend
-docker compose --env-file .env.server up -d --build
-```
-
-Verify: `curl http://localhost:8000/health`
-
-Then set up agents with a custom server URL:
-
-```bash
-npx patchcord@latest
-# When prompted for custom server URL, enter yours
 ```
 
 ## Configuration

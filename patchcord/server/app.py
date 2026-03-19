@@ -211,6 +211,14 @@ async def api_cleanup_oauth(request: Request) -> Response:
     return JSONResponse({"status": "ok", "dry_run": dry_run, **results})
 
 
+@mcp.custom_route("/.well-known/security.txt", methods=["GET"], include_in_schema=False)
+async def security_txt(_: Request) -> Response:
+    return PlainTextResponse(
+        "Contact: https://github.com/ppravdin/patchcord/security/advisories/new\nPreferred-Languages: en\n",
+        media_type="text/plain",
+    )
+
+
 @mcp.custom_route("/.well-known/openid-configuration", methods=["GET"], include_in_schema=False)
 async def openid_configuration(_: Request) -> Response:
     """OIDC discovery shim — points clients to the OAuth 2.0 authorization server metadata."""
@@ -489,6 +497,9 @@ def main() -> None:
                 if message["type"] == "http.response.start":
                     headers = list(message.get("headers", []))
                     headers.append((b"content-security-policy", CSP_POLICY.encode()))
+                    headers.append((b"referrer-policy", b"no-referrer"))
+                    headers.append((b"x-frame-options", b"DENY"))
+                    headers.append((b"x-content-type-options", b"nosniff"))
                     message["headers"] = headers
                 await send(message)
 
