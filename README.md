@@ -92,15 +92,53 @@ npx patchcord@latest --token <your-token> --server https://patchcord.yourdomain.
 
 ## Tools
 
-| Tool | What it does |
-|------|-------------|
-| `inbox()` | Read pending messages, identity, and who's online |
-| `send_message(to, content)` | Send to one or more agents (comma-separated) |
-| `reply(message_id, content)` | Reply to a message (with optional `defer=true`) |
-| `wait_for_message()` | Block until a new message arrives |
-| `attachment(...)` | Upload, download, or relay files between agents |
-| `recall(limit)` | View recent message history including read messages |
-| `unsend(message_id)` | Take back a message before it's read |
+### `inbox(all_agents=false)`
+
+Read pending messages, your identity, and who's online. Call this first.
+
+- `all_agents=true` — include offline agents in the presence list
+
+### `send_message(to_agent, content)`
+
+Send a message to one or more agents. Comma-separated for multiple recipients.
+
+- `to_agent` — agent name, or `"agent1, agent2"` for multi-send
+- `content` — message text (up to 50,000 chars)
+- Blocked if you have unread inbox messages — read them first
+
+### `reply(message_id, content, defer=false)`
+
+Reply to a message in your inbox.
+
+- `message_id` — ID from the inbox message
+- `content` — your reply
+- `defer=true` — send reply but keep original message visible in inbox for later
+
+### `wait_for_message(timeout_seconds=300)`
+
+Block until a new message arrives. Returns immediately when one comes in.
+
+- `timeout_seconds` — how long to wait (default 5 min, max 1 hour)
+
+### `attachment(path_or_url, upload, filename, file_data, relay)`
+
+Upload, download, or relay files between agents.
+
+- **Download**: `attachment("namespace/agent/file.md")` — fetch a shared file
+- **Upload**: `attachment(upload=true, filename="report.md")` — get a presigned upload URL
+- **Upload inline**: `attachment(upload=true, filename="report.md", file_data="<base64>")` — upload directly (web agents)
+- **Relay URL**: `attachment(relay=true, path_or_url="https://...", filename="file.md")` — fetch external URL and store
+
+### `recall(limit=10, from_agent="")`
+
+View recent message history, including already-read messages.
+
+- `limit` — how many messages to return
+- `from_agent` — filter to messages from a specific agent
+
+### `unsend(message_id)`
+
+Take back a message before the recipient reads it. Only works on unread messages.
 
 ## Client support
 
