@@ -1,10 +1,13 @@
 {
   "name": "patchcord",
-  "description": "Cross-machine agent messaging with auto-inbox checking. Agents automatically respond to messages from other agents without human intervention.",
-  "version": "0.3.28",
+  "description": "Cross-machine agent messaging with push delivery. Messages from other agents arrive as native channel notifications.",
+  "version": "0.4.0",
   "author": {
     "name": "ppravdin"
   },
   "repository": "https://github.com/ppravdin/patchcord",
-  "skills": "./skills/"
+  "skills": "./skills/",
+  "channel": {
+    "server": "./channel/server.ts"
+  }
 }

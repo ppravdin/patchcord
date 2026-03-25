@@ -37,8 +37,11 @@ from patchcord.server.helpers import (
     _derive_machine_name_from_request,
     _get_messages,
     _get_rows,
+    _patch_message,
     _periodic_cleanup,
+    _post_message,
     _post_rows,
+    _resolve_target_agent,
     _run_cleanup,
     _run_oauth_cleanup,
     _upsert_registry,
@@ -157,6 +160,161 @@ async def api_inbox(request: Request) -> Response:
             "machine_name": machine_name,
         }
     )
+
+
+# ---------------------------------------------------------------------------
+# Channel endpoints (push delivery for Claude Code channel plugin)
+# ---------------------------------------------------------------------------
+
+
+async def _channel_auth(request: Request) -> tuple[str, str] | Response:
+    """Authenticate a channel request via bearer token. Returns (namespace_id, agent_id) or error Response."""
+    auth_header = request.headers.get("authorization", "")
+    if not auth_header.lower().startswith("bearer "):
+        return JSONResponse({"error": "missing bearer token"}, status_code=401)
+    token = auth_header[7:].strip()
+    if not token:
+        return JSONResponse({"error": "empty bearer token"}, status_code=401)
+    access = await _oauth_provider.load_access_token(token)
+    if not access or not access.client_id:
+        return JSONResponse({"error": "invalid token"}, status_code=401)
+    return _parse_ns_agent(access.client_id)
+
+
+@mcp.custom_route("/api/channel/poll", methods=["POST"], include_in_schema=False)
+async def api_channel_poll(request: Request) -> Response:
+    """Poll for pending messages. Used by channel plugin for push delivery."""
+    result = await _channel_auth(request)
+    if isinstance(result, Response):
+        return result
+    namespace_id, agent_id = result
+
+    try:
+        rows = await _get_messages({
+            "namespace_id": f"eq.{namespace_id}",
+            "to_agent": f"eq.{agent_id}",
+            "status": f"eq.{STATUS_PENDING}",
+            "order": "created_at.asc",
+            "limit": "50",
+            "select": "id,from_agent,content,created_at,namespace_id,reply_to,encrypted",
+        })
+    except Exception as exc:
+        return JSONResponse({"error": http_error(exc)}, status_code=500)
+
+    # Mark as read (delivered via channel)
+    for row in rows:
+        try:
+            await _patch_message(row["id"], {"status": STATUS_READ})
+        except Exception:
+            pass
+
+    messages = [
+        {
+            "id": row.get("id"),
+            "from_agent": row.get("from_agent"),
+            "content": row.get("content"),
+            "created_at": row.get("created_at"),
+            "namespace_id": row.get("namespace_id"),
+            "reply_to": row.get("reply_to"),
+        }
+        for row in rows
+    ]
+    return JSONResponse(messages)
+
+
+@mcp.custom_route("/api/channel/send", methods=["POST"], include_in_schema=False)
+async def api_channel_send(request: Request) -> Response:
+    """Send a message. Used by channel plugin's send_message tool."""
+    result = await _channel_auth(request)
+    if isinstance(result, Response):
+        return result
+    namespace_id, agent_id = result
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid JSON"}, status_code=400)
+
+    to_agent = (body.get("to_agent") or "").strip()
+    content = (body.get("content") or "").strip()
+    if not to_agent:
+        return JSONResponse({"error": "to_agent required"}, status_code=400)
+    if not content:
+        return JSONResponse({"error": "content required"}, status_code=400)
+    if len(content) > 50000:
+        return JSONResponse({"error": "content exceeds 50000 characters"}, status_code=400)
+
+    try:
+        target_ns, to_agent_resolved = await _resolve_target_agent(
+            namespace_id, to_agent, False, sender_agent_id=agent_id
+        )
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)[:200]}, status_code=400)
+
+    try:
+        msg = await _post_message({
+            "namespace_id": target_ns,
+            "from_agent": agent_id,
+            "to_agent": to_agent_resolved,
+            "content": content,
+            "status": STATUS_PENDING,
+        })
+    except Exception as exc:
+        return JSONResponse({"error": http_error(exc)}, status_code=500)
+
+    return JSONResponse({"id": msg.get("id"), "status": "sent", "to_agent": to_agent_resolved})
+
+
+@mcp.custom_route("/api/channel/reply", methods=["POST"], include_in_schema=False)
+async def api_channel_reply(request: Request) -> Response:
+    """Reply to a message. Used by channel plugin's reply tool."""
+    result = await _channel_auth(request)
+    if isinstance(result, Response):
+        return result
+    namespace_id, agent_id = result
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid JSON"}, status_code=400)
+
+    message_id = (body.get("message_id") or "").strip()
+    content = (body.get("content") or "").strip()
+    if not message_id:
+        return JSONResponse({"error": "message_id required"}, status_code=400)
+    if not content:
+        return JSONResponse({"error": "content required"}, status_code=400)
+    if len(content) > 50000:
+        return JSONResponse({"error": "content exceeds 50000 characters"}, status_code=400)
+
+    # Load original message
+    try:
+        originals = await _get_messages({"id": f"eq.{message_id}", "limit": "1", "select": "id,from_agent,to_agent,namespace_id,status"})
+    except Exception as exc:
+        return JSONResponse({"error": http_error(exc)}, status_code=500)
+    if not originals:
+        return JSONResponse({"error": "message not found"}, status_code=404)
+
+    original = originals[0]
+    if original.get("to_agent") != agent_id:
+        return JSONResponse({"error": "cannot reply to a message not addressed to you"}, status_code=403)
+
+    orig_ns = original.get("namespace_id", namespace_id)
+
+    try:
+        await _patch_message(message_id, {"status": "replied"})
+        msg = await _post_message({
+            "namespace_id": orig_ns,
+            "from_agent": agent_id,
+            "to_agent": original["from_agent"],
+            "content": content,
+            "reply_to": message_id,
+            "status": STATUS_PENDING,
+        })
+    except Exception as exc:
+        return JSONResponse({"error": http_error(exc)}, status_code=500)
+
+    return JSONResponse({"id": msg.get("id"), "status": "replied", "to_agent": original["from_agent"]})
 
 
 @mcp.custom_route("/health", methods=["GET"], include_in_schema=False)

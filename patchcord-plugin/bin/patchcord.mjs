@@ -676,7 +676,7 @@ if (!cmd || cmd === "install" || cmd === "agent" || cmd === "--token" || cmd ===
     console.log(`\n  ${green}✓${r} Codex configured: ${dim}${configPath}${r}`);
     console.log(`  ${green}✓${r} Slash commands: ${dim}/patchcord${r}, ${dim}/patchcord-wait${r}`);
   } else {
-    // Claude Code: write .mcp.json
+    // Claude Code: write .mcp.json (MCP server only — channel plugin disabled)
     const mcpPath = join(cwd, ".mcp.json");
     const mcpConfig = {
       mcpServers: {
@@ -731,6 +731,30 @@ if (!cmd || cmd === "install" || cmd === "agent" || cmd === "--token" || cmd ===
 
   console.log(`\n${dim}Restart your ${toolName} session, then say:${r} ${bold}check inbox${r}`);
   process.exit(0);
+}
+
+// ── channel: spawn the channel MCP server (used by .mcp.json) ──
+if (cmd === "channel") {
+  const channelScript = join(pluginRoot, "channel", "server.ts");
+  if (!existsSync(channelScript)) {
+    console.error("Channel server not found. Reinstall patchcord.");
+    process.exit(1);
+  }
+  // Prefer bun, fall back to node (tsx)
+  const hasBun = run("which bun");
+  if (hasBun) {
+    const { spawnSync } = await import("child_process");
+    // Install deps if needed
+    const channelDir = join(pluginRoot, "channel");
+    if (!existsSync(join(channelDir, "node_modules"))) {
+      spawnSync("bun", ["install", "--no-summary"], { cwd: channelDir, stdio: "inherit" });
+    }
+    const result = spawnSync("bun", ["run", channelScript], { stdio: "inherit", env: process.env });
+    process.exit(result.status ?? 1);
+  } else {
+    console.error("Channel plugin requires bun. Install from https://bun.sh");
+    process.exit(1);
+  }
 }
 
 // ── back-compat: init → install + agent ───────────────────────
