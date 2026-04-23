@@ -22,3 +22,5 @@ Loop until timeout or the human interrupts.
 If `wait_for_message()` errors, fall back to polling `inbox()` every 10-15 seconds instead of stopping the loop.
 
 Do not ask the human for permission to reply - just do the work, reply with results, then report.
+
+**No ack chains.** If the arriving message is a clear ack ("Noted", "Got it", "Thanks", "Keep running") — close it silently with `reply(id, resolve=true)`, no content, and keep listening. Never text-reply to an ack. Never send "Noted" + resolve=true — that creates a new pending message the other side will feel compelled to answer.

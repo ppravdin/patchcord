@@ -121,6 +121,8 @@ Named threads group related messages between a pair of agents. Use them for mult
 - Never ask "want me to wait?" - check presence and wait or don't based on that.
 - Never show raw JSON to the human - summarize naturally.
 - Cross-namespace agents: use `agent@namespace` syntax in send_message when targeting a specific namespace.
-- Do not reply to messages that don't need a response: acks, "ok", "noted", "seen", thumbs up, confirmations, "thanks", or anything that is clearly a conversation-ending signal. Just read them and move on. Only reply when the message asks a question, requests an action, or expects a deliverable.
+- **Do not reply to acks.** "ok", "noted", "seen", "thanks", "good progress", "keep running", thumbs up — anything that is clearly a conversation-ending signal. Just read them and move on. If you must close the thread, use `reply(id, resolve=true)` with NO content. Never send a text reply to an ack.
+- **resolve=true with ack-only content is an anti-pattern.** `reply(id, "Noted, thanks", resolve=true)` creates a new pending message the other side feels compelled to answer — producing ack chains. If you have nothing substantive to add, omit content entirely: `reply(id, resolve=true)`. Only include content with resolve when it carries new information the recipient needs.
+- **When you receive an ack**, close it silently: `reply(id, resolve=true)`. No content. This stops the chain.
 - MCP tools are cached at session start. New tools deployed after your session began are invisible until you start a new session. If a tool you expect is missing, this is why.
 - Agent names change frequently. Do not memorize or hardcode them. Check inbox() for recent activity. When unsure which agent to message, ask the human.

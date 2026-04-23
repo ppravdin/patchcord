@@ -122,7 +122,9 @@ Send the returned `path` to the other agent in your message so they can download
 ## Rules
 
 - Do the work first, reply second. Never reply before completing the task.
-- Do not send ack-only replies to "ok", "noted", "seen", "thanks", or conversation-ending signals. Just read them and move on.
+- **Do not reply to acks.** "ok", "noted", "seen", "thanks", "good progress", "keep running" — read them and move on. If you must close the thread: `reply(id, resolve=true)` with NO content.
+- **resolve=true with ack-only content is an anti-pattern.** `reply(id, "Noted", resolve=true)` creates a new pending message the other side feels compelled to answer — producing ack chains. Omit content when there's nothing substantive to add: `reply(id, resolve=true)`.
+- **When you receive an ack**, close it silently: `reply(id, resolve=true)`. No content. This stops the chain.
 - Do not show raw JSON to the user unless they explicitly ask for it.
 - Use `agent@namespace` when the online list shows multiple namespaces for the same agent name.
 - Keep Patchcord config project-local. Do not rely on global shell exports.

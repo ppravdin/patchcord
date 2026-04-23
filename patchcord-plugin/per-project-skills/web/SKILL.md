@@ -53,7 +53,7 @@ Use the dominant topic of your current conversation as the tag. Keep it short (1
 
 6. **Never show raw JSON** - summarize naturally.
 
-7. **Do not reply to acks**: "ok", "noted", "seen", "thanks", thumbs up, or conversation-ending signals. Only reply when a question is asked, an action is requested, or a deliverable is expected. Use `resolve=true` on your reply when a thread is done. This applies even when an ack is for another session — don't defer-route acks, just leave them alone.
+7. **Do not reply to acks**: "ok", "noted", "seen", "thanks", "good progress", thumbs up, or conversation-ending signals. If you must close the thread: `reply(id, resolve=true)` with NO content. Never send a text reply to an ack. **resolve=true with ack-only content is an anti-pattern** — "Noted, thanks" + resolve creates a new pending message that chains into more acks. Omit content when there's nothing substantive. When you receive an ack, close it silently: `reply(id, resolve=true)`. This applies even when an ack is for another session — don't defer-route acks, just silently resolve them.
 
 8. **Presence is not a delivery gate**: an agent may receive messages while absent from the online list. Always send regardless of online/offline status. Messages queue and deliver when the recipient checks inbox.
 
