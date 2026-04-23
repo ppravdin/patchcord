@@ -39,7 +39,7 @@ const PROJECT_MARKERS = [
   ".git", "package.json", "package-lock.json", "Cargo.toml", "go.mod", "go.sum",
   "pyproject.toml", "pom.xml", "build.gradle", "Makefile", "CMakeLists.txt",
   "Gemfile", "composer.json", "mix.exs", "requirements.txt", "setup.py",
-  ".claude", ".codex", ".cursor", ".vscode",
+  ".claude", ".codex", ".cursor", ".vscode", ".openclaw",
 ];
 
 function detectFolder(dir) {
@@ -80,7 +80,7 @@ if (cmd === "plugin-path") {
 if (!cmd || cmd === "install" || cmd === "agent" || cmd === "--token" || cmd === "--no-browser" || cmd === "--server") {
   const flags = cmd?.startsWith("--") ? process.argv.slice(2) : process.argv.slice(3);
   const fullStatusline = flags.includes("--full");
-  const { readFileSync, writeFileSync } = await import("fs");
+  const { readFileSync, writeFileSync, unlinkSync } = await import("fs");
 
   function safeReadJson(filePath) {
     try {
@@ -115,11 +115,16 @@ if (!cmd || cmd === "install" || cmd === "agent" || cmd === "--token" || cmd ===
   // Claude Code
   const hasClaude = run("which claude");
   if (hasClaude) {
-    const marketplaceExists = run(`claude plugin marketplace list`)?.includes("patchcord");
-    if (!marketplaceExists) {
-      run(`claude plugin marketplace add "${pluginRoot}"`);
-      const installed = run(`claude plugin list`)?.includes("patchcord");
-      installed ? run(`claude plugin update patchcord`) : run(`claude plugin install patchcord`);
+    // Always re-add marketplace (copies fresh files from this npx package)
+    // and install/update plugin. Claude Code's built-in plugin update
+    // doesn't detect new versions from local sources (#37252).
+    run(`claude plugin marketplace add "${pluginRoot}"`);
+    const installed = run(`claude plugin list`)?.includes("patchcord");
+    if (installed) {
+      run(`claude plugin update patchcord@patchcord-marketplace`);
+      globalChanges.push("Claude Code plugin updated");
+    } else {
+      run(`claude plugin install patchcord@patchcord-marketplace`);
       globalChanges.push("Claude Code plugin installed");
     }
 
@@ -168,12 +173,12 @@ if (!cmd || cmd === "install" || cmd === "agent" || cmd === "--token" || cmd ===
     let cursorChanged = false;
     if (!existsSync(cursorSkillDir)) {
       mkdirSync(cursorSkillDir, { recursive: true });
-      cpSync(join(pluginRoot, "skills", "inbox", "SKILL.md"), join(cursorSkillDir, "SKILL.md"));
+      cpSync(join(pluginRoot, "skills", "patchcord", "SKILL.md"), join(cursorSkillDir, "SKILL.md"));
       cursorChanged = true;
     }
     if (!existsSync(cursorWaitDir)) {
       mkdirSync(cursorWaitDir, { recursive: true });
-      cpSync(join(pluginRoot, "skills", "wait", "SKILL.md"), join(cursorWaitDir, "SKILL.md"));
+      cpSync(join(pluginRoot, "skills", "patchcord-wait", "SKILL.md"), join(cursorWaitDir, "SKILL.md"));
       cursorChanged = true;
     }
     if (cursorChanged) globalChanges.push("Cursor skills installed");
@@ -186,12 +191,12 @@ if (!cmd || cmd === "install" || cmd === "agent" || cmd === "--token" || cmd ===
     let windsurfChanged = false;
     if (!existsSync(windsurfSkillDir)) {
       mkdirSync(windsurfSkillDir, { recursive: true });
-      cpSync(join(pluginRoot, "skills", "inbox", "SKILL.md"), join(windsurfSkillDir, "SKILL.md"));
+      cpSync(join(pluginRoot, "skills", "patchcord", "SKILL.md"), join(windsurfSkillDir, "SKILL.md"));
       windsurfChanged = true;
     }
     if (!existsSync(windsurfWaitDir)) {
       mkdirSync(windsurfWaitDir, { recursive: true });
-      cpSync(join(pluginRoot, "skills", "wait", "SKILL.md"), join(windsurfWaitDir, "SKILL.md"));
+      cpSync(join(pluginRoot, "skills", "patchcord-wait", "SKILL.md"), join(windsurfWaitDir, "SKILL.md"));
       windsurfChanged = true;
     }
     if (windsurfChanged) globalChanges.push("Windsurf skills installed");
@@ -205,12 +210,12 @@ if (!cmd || cmd === "install" || cmd === "agent" || cmd === "--token" || cmd ===
     let geminiChanged = false;
     if (!existsSync(geminiSkillDir)) {
       mkdirSync(geminiSkillDir, { recursive: true });
-      cpSync(join(pluginRoot, "skills", "inbox", "SKILL.md"), join(geminiSkillDir, "SKILL.md"));
+      cpSync(join(pluginRoot, "skills", "patchcord", "SKILL.md"), join(geminiSkillDir, "SKILL.md"));
       geminiChanged = true;
     }
     if (!existsSync(geminiWaitDir)) {
       mkdirSync(geminiWaitDir, { recursive: true });
-      cpSync(join(pluginRoot, "skills", "wait", "SKILL.md"), join(geminiWaitDir, "SKILL.md"));
+      cpSync(join(pluginRoot, "skills", "patchcord-wait", "SKILL.md"), join(geminiWaitDir, "SKILL.md"));
       geminiChanged = true;
     }
     if (!existsSync(join(geminiCmdDir, "patchcord.toml"))) {
@@ -222,13 +227,14 @@ if (!cmd || cmd === "install" || cmd === "agent" || cmd === "--token" || cmd ===
     if (geminiChanged) globalChanges.push("Gemini CLI skills + commands installed");
   }
 
-  // Codex CLI
+  // Codex CLI — clean up old apps.patchcord setting (it blocks the plugin)
   const codexConfig = join(HOME, ".codex", "config.toml");
   if (existsSync(codexConfig)) {
     const content = readFileSync(codexConfig, "utf-8");
-    if (!content.includes("[apps.patchcord]")) {
-      writeFileSync(codexConfig, content.trimEnd() + "\n\n[apps.patchcord]\nenabled = false\n");
-      globalChanges.push("Codex ChatGPT app conflict prevented");
+    if (content.includes("[apps.patchcord]")) {
+      const cleaned = content.replace(/\[apps\.patchcord\]\n(?:(?!\[)[^\n]*\n?)*/g, "").replace(/\n{3,}/g, "\n\n").trim();
+      writeFileSync(codexConfig, cleaned + "\n");
+      globalChanges.push("Removed old apps.patchcord setting");
     }
   }
 
@@ -257,7 +263,8 @@ if (!cmd || cmd === "install" || cmd === "agent" || cmd === "--token" || cmd ===
 
   const CLIENT_TYPE_MAP = {
     "claude_code": "1", "codex": "2", "cursor": "3", "windsurf": "4",
-    "gemini": "5", "vscode": "6", "zed": "7", "opencode": "8",
+    "gemini": "5", "vscode": "6", "zed": "7", "opencode": "8", "openclaw": "9", "antigravity": "10",
+    "cline": "11",
   };
 
 
@@ -291,9 +298,10 @@ if (!cmd || cmd === "install" || cmd === "agent" || cmd === "--token" || cmd ===
     console.log(`  ${cyan}1.${r} Claude Code   ${cyan}5.${r} Gemini CLI`);
     console.log(`  ${cyan}2.${r} Codex CLI     ${cyan}6.${r} VS Code`);
     console.log(`  ${cyan}3.${r} Cursor        ${cyan}7.${r} Zed`);
-    console.log(`  ${cyan}4.${r} Windsurf      ${cyan}8.${r} OpenCode\n`);
-    choice = (await ask(`${dim}Choose (1-8):${r} `)).trim();
-    if (!["1","2","3","4","5","6","7","8"].includes(choice)) {
+    console.log(`  ${cyan}4.${r} Windsurf      ${cyan}8.${r} OpenCode`);
+    console.log(`  ${cyan}11.${r} Cline         ${cyan}9.${r} OpenClaw\n`);
+    choice = (await ask(`${dim}Choose (1-9, 11):${r} `)).trim();
+    if (!["1","2","3","4","5","6","7","8","9","11"].includes(choice)) {
       console.error("Invalid choice.");
       rl.close();
       process.exit(1);
@@ -320,8 +328,94 @@ if (!cmd || cmd === "install" || cmd === "agent" || cmd === "--token" || cmd ===
     }
     rl.close();
   } else {
+    // Check if patchcord is already configured — offer to update URL without re-auth
+    let existingToken = "";
+    let existingConfigFile = "";
+    const mcpJsonPath = join(cwd, ".mcp.json");
+    const codexTomlPath = join(cwd, ".codex", "config.toml");
+    if (existsSync(mcpJsonPath)) {
+      try {
+        const existing = JSON.parse(readFileSync(mcpJsonPath, "utf-8"));
+        const pt = existing?.mcpServers?.patchcord;
+        if (pt?.headers?.Authorization) {
+          existingToken = pt.headers.Authorization.replace(/^Bearer\s+/i, "");
+          existingConfigFile = mcpJsonPath;
+        }
+      } catch {}
+    }
+    if (!existingToken && existsSync(codexTomlPath)) {
+      try {
+        const content = readFileSync(codexTomlPath, "utf-8");
+        const match = content.match(/Bearer\s+([^\s"]+)/);
+        if (match) {
+          existingToken = match[1];
+          existingConfigFile = codexTomlPath;
+        }
+      } catch {}
+    }
+    // Global configs (Antigravity, OpenClaw, Gemini, Windsurf, Zed) are NOT
+    // checked here. They're set up once globally and should not block new
+    // project setup. Only per-project configs trigger "already configured."
+    if (existingToken) {
+      // Figure out which tool is already configured
+      const existingToolName = existingConfigFile.includes(".codex") ? "Codex"
+        : existingConfigFile.includes("antigravity") ? "Antigravity"
+        : existingConfigFile.includes("openclaw") ? "OpenClaw"
+        : existingConfigFile.includes(".cursor") ? "Cursor"
+        : existingConfigFile.includes(".vscode") ? "VS Code"
+        : "Claude Code";
+
+      // Validate the existing token to get identity
+      let existingIdentity = "";
+      const validateResp = run(`curl -sf --max-time 5 -H "Authorization: Bearer ${existingToken}" "${serverUrl}/api/inbox?limit=0&count_only=1"`);
+      if (validateResp) {
+        try {
+          const data = JSON.parse(validateResp);
+          existingIdentity = `${data.agent_id}@${data.namespace_id}`;
+        } catch {}
+      }
+
+      const identityStr = existingIdentity ? ` (${bold}${existingIdentity}${r}${dim})` : "";
+      console.log(`\n  ${dim}${existingToolName} agent is already configured in this project${identityStr}${r}`);
+
+      if (rl) rl.close();
+      const { createInterface: createRLU } = await import("readline");
+      const rlU = createRLU({ input: process.stdin, output: process.stdout });
+      const askU = (q) => new Promise((resolve) => rlU.question(q, resolve));
+
+      // Q1: Add another agent? (most likely reason to re-run installer)
+      const addAnswer = (await askU(`  ${bold}Add another agent to this project? (y/N):${r} `)).trim().toLowerCase();
+      if (addAnswer === "y" || addAnswer === "yes") {
+        rlU.close();
+        // Drop into browser connect flow — fresh setup for new agent
+        token = "";
+      } else {
+        // Q2: Update existing agent?
+        const updateAnswer = (await askU(`  ${bold}Update ${existingToolName} agent? (y/N):${r} `)).trim().toLowerCase();
+        rlU.close();
+        if (updateAnswer === "y" || updateAnswer === "yes") {
+          token = existingToken;
+          if (existingIdentity) {
+            identity = existingIdentity;
+            const vResp = validateResp ? JSON.parse(validateResp) : {};
+            clientType = vResp.client_type || "";
+            choice = CLIENT_TYPE_MAP[clientType] || "";
+            console.log(`  ${green}✓${r} ${bold}${identity}${r} — token valid`);
+          } else {
+            console.log(`  ${yellow}⚠${r} Token expired or invalid. Starting fresh setup.`);
+            token = "";
+          }
+        } else {
+          // Both N — skills already updated by global setup, done
+          console.log(`\n  ${dim}Skills updated.${r}`);
+          process.exit(0);
+        }
+      }
+    }
+
+    if (!token) {
     // Browser connect flow
-    rl.close();
+    if (rl) rl.close();
 
     function canOpenBrowser() {
       if (process.env.SSH_CLIENT || process.env.SSH_TTY) return false;
@@ -400,7 +494,7 @@ if (!cmd || cmd === "install" || cmd === "agent" || cmd === "--token" || cmd ===
       const sseResult = await new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
           reject(new Error("Session expired. Run npx patchcord@latest again."));
-        }, 5 * 60 * 1000);
+        }, 15 * 60 * 1000);
 
         function connect() {
           const req = http.get(`${apiUrl}/api/connect/session/${sessionId}/wait`, {
@@ -457,24 +551,12 @@ if (!cmd || cmd === "install" || cmd === "agent" || cmd === "--token" || cmd ===
       console.log(`  ${green}✓${r} ${bold}${identity}${r} connected.`);
 
       if (!choice) {
-        // Backend didn't send tool type — ask in terminal
-        const { createInterface: createRL3 } = await import("readline");
-        const rl3 = createRL3({ input: process.stdin, output: process.stdout });
-        const ask3 = (q) => new Promise((resolve) => rl3.question(q, resolve));
-        console.log(`\n${bold}Which tool are you setting up?${r}\n`);
-        console.log(`  ${cyan}1.${r} Claude Code   ${cyan}5.${r} Gemini CLI`);
-        console.log(`  ${cyan}2.${r} Codex CLI     ${cyan}6.${r} VS Code`);
-        console.log(`  ${cyan}3.${r} Cursor        ${cyan}7.${r} Zed`);
-        console.log(`  ${cyan}4.${r} Windsurf      ${cyan}8.${r} OpenCode\n`);
-        choice = (await ask3(`${dim}Choose (1-8):${r} `)).trim();
-        rl3.close();
-        if (!["1","2","3","4","5","6","7","8"].includes(choice)) {
-          console.error("Invalid choice.");
-          process.exit(1);
-        }
+        // Web UI didn't send client_type — default to Claude Code
+        choice = "1";
       }
     }
-  }
+  } // end connect flow
+  } // end if (!token)
 
   const isCodex = choice === "2";
   const isCursor = choice === "3";
@@ -483,6 +565,9 @@ if (!cmd || cmd === "install" || cmd === "agent" || cmd === "--token" || cmd ===
   const isVSCode = choice === "6";
   const isZed = choice === "7";
   const isOpenCode = choice === "8";
+  const isOpenClaw = choice === "9";
+  const isAntigravity = choice === "10";
+  const isCline = choice === "11";
 
   const hostname = run("hostname -s") || run("hostname") || "unknown";
 
@@ -494,7 +579,7 @@ if (!cmd || cmd === "install" || cmd === "agent" || cmd === "--token" || cmd ===
     const cursorConfig = {
       mcpServers: {
         patchcord: {
-          url: `${serverUrl}/mcp/bearer`,
+          url: `${serverUrl}/mcp`,
           headers: {
             Authorization: `Bearer ${token}`,
             "X-Patchcord-Machine": hostname,
@@ -523,7 +608,7 @@ if (!cmd || cmd === "install" || cmd === "agent" || cmd === "--token" || cmd ===
     const wsConfig = {
       mcpServers: {
         patchcord: {
-          url: `${serverUrl}/mcp/bearer`,
+          url: `${serverUrl}/mcp`,
           headers: {
             Authorization: `Bearer ${token}`,
             "X-Patchcord-Machine": hostname,
@@ -610,6 +695,140 @@ if (!cmd || cmd === "install" || cmd === "agent" || cmd === "--token" || cmd ===
     };
     writeFileSync(ocPath, JSON.stringify(ocConfig, null, 2) + "\n");
     console.log(`\n  ${green}✓${r} OpenCode configured: ${dim}${ocPath}${r}`);
+  } else if (isOpenClaw) {
+    // OpenClaw: global ~/.openclaw/openclaw.json → mcp.servers
+    // Try CLI first, fall back to direct file write
+    const openclawServerEntry = JSON.stringify({
+      url: `${serverUrl}/mcp`,
+      transport: "streamable-http",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "X-Patchcord-Machine": hostname,
+      },
+      connectionTimeoutMs: 300000,
+    });
+    const cliResult = run(`openclaw mcp set patchcord '${openclawServerEntry.replace(/'/g, "'\\''")}'`);
+    if (cliResult !== null) {
+      console.log(`\n  ${green}✓${r} OpenClaw configured via CLI: ${dim}openclaw mcp set${r}`);
+    } else {
+      // CLI not available — write config directly
+      const openclawDir = join(HOME, ".openclaw");
+      const openclawPath = join(openclawDir, "openclaw.json");
+      let openclawConfig = {};
+      if (existsSync(openclawPath)) {
+        try {
+          openclawConfig = JSON.parse(readFileSync(openclawPath, "utf-8"));
+        } catch {}
+      }
+      if (!openclawConfig.mcp) openclawConfig.mcp = {};
+      if (!openclawConfig.mcp.servers) openclawConfig.mcp.servers = {};
+      openclawConfig.mcp.servers.patchcord = {
+        url: `${serverUrl}/mcp`,
+        transport: "streamable-http",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "X-Patchcord-Machine": hostname,
+        },
+        connectionTimeoutMs: 300000,
+      };
+      mkdirSync(openclawDir, { recursive: true });
+      writeFileSync(openclawPath, JSON.stringify(openclawConfig, null, 2) + "\n");
+      console.log(`\n  ${green}✓${r} OpenClaw configured: ${dim}${openclawPath}${r}`);
+    }
+    console.log(`  ${yellow}Global config — all OpenClaw channels share this agent.${r}`);
+    console.log(`  ${dim}Run: openclaw gateway restart${r}`);
+    // mcp-remote fallback note for older OpenClaw versions
+    console.log(`\n  ${dim}If tools don't appear after restart, your OpenClaw may be too old${r}`);
+    console.log(`  ${dim}for streamable-http. Update to v2026.3.31+ or use mcp-remote:${r}`);
+    console.log(`  ${dim}openclaw mcp set patchcord '{"command":"npx","args":["mcp-remote","${serverUrl}/mcp","--header","Authorization: Bearer ${token}"],"transport":"stdio"}'${r}`);
+  } else if (isAntigravity) {
+    // Antigravity: global ~/.gemini/antigravity/mcp_config.json → mcpServers
+    const agDir = join(HOME, ".gemini", "antigravity");
+    const agPath = join(agDir, "mcp_config.json");
+    let agConfig = {};
+    if (existsSync(agPath)) {
+      try {
+        agConfig = JSON.parse(readFileSync(agPath, "utf-8"));
+      } catch {}
+    }
+    if (!agConfig.mcpServers) agConfig.mcpServers = {};
+    agConfig.mcpServers.patchcord = {
+      serverUrl: `${serverUrl}/mcp`,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "X-Patchcord-Machine": hostname,
+      },
+    };
+    mkdirSync(agDir, { recursive: true });
+    writeFileSync(agPath, JSON.stringify(agConfig, null, 2) + "\n");
+    console.log(`\n  ${green}✓${r} Antigravity configured: ${dim}${agPath}${r}`);
+    // Install global skills
+    const agSkillDir = join(agDir, "skills", "patchcord");
+    const agWaitDir = join(agDir, "skills", "patchcord-wait");
+    mkdirSync(agSkillDir, { recursive: true });
+    mkdirSync(agWaitDir, { recursive: true });
+    cpSync(join(pluginRoot, "skills", "patchcord", "SKILL.md"), join(agSkillDir, "SKILL.md"));
+    cpSync(join(pluginRoot, "skills", "patchcord-wait", "SKILL.md"), join(agWaitDir, "SKILL.md"));
+    console.log(`  ${green}✓${r} Skills installed: ${dim}patchcord${r}, ${dim}patchcord-wait${r}`);
+    console.log(`  ${yellow}Global config — all Antigravity projects share this agent.${r}`);
+  } else if (isCline) {
+    // Cline VS Code extension: global cline_mcp_settings.json
+    // Config lives in VS Code's globalStorage for saoudrizwan.claude-dev
+    // Try stable VS Code first, then Insiders, then Cursor
+    const vsCodeVariants = process.platform === "darwin"
+      ? [
+          join(HOME, "Library", "Application Support", "Code", "User", "globalStorage"),
+          join(HOME, "Library", "Application Support", "Code - Insiders", "User", "globalStorage"),
+          join(HOME, "Library", "Application Support", "Cursor", "User", "globalStorage"),
+        ]
+      : process.platform === "win32"
+      ? [
+          join(process.env.APPDATA || join(HOME, "AppData", "Roaming"), "Code", "User", "globalStorage"),
+          join(process.env.APPDATA || join(HOME, "AppData", "Roaming"), "Code - Insiders", "User", "globalStorage"),
+          join(process.env.APPDATA || join(HOME, "AppData", "Roaming"), "Cursor", "User", "globalStorage"),
+        ]
+      : [
+          join(HOME, ".config", "Code", "User", "globalStorage"),
+          join(HOME, ".config", "Code - Insiders", "User", "globalStorage"),
+          join(HOME, ".config", "Cursor", "User", "globalStorage"),
+        ];
+
+    // Find the first variant that has Cline's globalStorage directory (or exists at all)
+    const clineExtDir = "saoudrizwan.claude-dev";
+    let clineSettingsDir = null;
+    for (const base of vsCodeVariants) {
+      const candidate = join(base, clineExtDir, "settings");
+      const extDir = join(base, clineExtDir);
+      if (existsSync(extDir)) {
+        clineSettingsDir = candidate;
+        break;
+      }
+    }
+    // Fall back to stable VS Code path even if it doesn't exist yet
+    if (!clineSettingsDir) {
+      const fallbackBase = vsCodeVariants[0];
+      clineSettingsDir = join(fallbackBase, clineExtDir, "settings");
+    }
+
+    const clinePath = join(clineSettingsDir, "cline_mcp_settings.json");
+    let clineConfig = {};
+    if (existsSync(clinePath)) {
+      try { clineConfig = JSON.parse(readFileSync(clinePath, "utf-8")); } catch {}
+    }
+    if (!clineConfig.mcpServers) clineConfig.mcpServers = {};
+    clineConfig.mcpServers.patchcord = {
+      url: `${serverUrl}/mcp`,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "X-Patchcord-Machine": hostname,
+      },
+      disabled: false,
+      alwaysAllow: [],
+    };
+    mkdirSync(clineSettingsDir, { recursive: true });
+    writeFileSync(clinePath, JSON.stringify(clineConfig, null, 2) + "\n");
+    console.log(`\n  ${green}✓${r} Cline configured: ${dim}${clinePath}${r}`);
+    console.log(`  ${yellow}Global config — all Cline projects share this agent.${r}`);
   } else if (isVSCode) {
     // VS Code: write .vscode/mcp.json (per-project)
     const vscodeDir = join(cwd, ".vscode");
@@ -643,20 +862,24 @@ if (!cmd || cmd === "install" || cmd === "agent" || cmd === "--token" || cmd ===
     console.log(`\n  ${green}✓${r} VS Code configured: ${dim}${vscodePath}${r}`);
     console.log(`  ${dim}Requires GitHub Copilot extension with agent mode enabled.${r}`);
   } else if (isCodex) {
-    // Codex: copy skill + write config + install slash commands
-    const dest = join(cwd, ".agents", "skills", "patchcord");
-    mkdirSync(dest, { recursive: true });
-    const skillSrc = readFileSync(join(pluginRoot, "skills", "inbox", "SKILL.md"), "utf-8");
-    const codexNote = `\nIMPORTANT: Use the "patchcord-codex" MCP server for all patchcord tools (e.g. patchcord-codex.inbox, patchcord-codex.send_message). Do NOT use codex_apps.patchcord_* tools — they use the wrong identity.\n`;
-    writeFileSync(join(dest, "SKILL.md"), skillSrc.replace(/^(---\n[\s\S]*?---\n)/, `$1${codexNote}\n`));
+    // Codex: write MCP config + per-project skills + global plugin
+    // Per-project skills (working @patchcord in Codex v0.117)
+    const skillDest = join(cwd, ".agents", "skills", "patchcord");
+    mkdirSync(skillDest, { recursive: true });
+    writeFileSync(join(skillDest, "SKILL.md"),
+      readFileSync(join(pluginRoot, "per-project-skills", "codex", "SKILL.md"), "utf-8"));
+    const waitDest = join(cwd, ".agents", "skills", "patchcord-wait");
+    mkdirSync(waitDest, { recursive: true });
+    writeFileSync(join(waitDest, "SKILL.md"),
+      readFileSync(join(pluginRoot, "skills", "patchcord-wait", "SKILL.md"), "utf-8"));
 
     const codexDir = join(cwd, ".codex");
     mkdirSync(codexDir, { recursive: true });
     const configPath = join(codexDir, "config.toml");
     let existing = existsSync(configPath) ? readFileSync(configPath, "utf-8") : "";
     // Remove old patchcord config block if present
-    existing = existing.replace(/\[mcp_servers\.patchcord\]\n(?:(?!\[)[^\n]*\n?)*/g, "").replace(/\n{3,}/g, "\n\n").trim();
-    existing = existing.trimEnd() + `\n\n[mcp_servers.patchcord-codex]\nurl = "${serverUrl}/mcp/bearer"\nhttp_headers = { "Authorization" = "Bearer ${token}", "X-Patchcord-Machine" = "${hostname}" }\n`;
+    existing = existing.replace(/\[mcp_servers\.patchcord[-\w]*\]\n(?:(?!\[)[^\n]*\n?)*/g, "").replace(/\n{3,}/g, "\n\n").trim();
+    existing = existing.trimEnd() + `\n\n[mcp_servers.patchcord-codex]\nurl = "${serverUrl}/mcp"\nhttp_headers = { "Authorization" = "Bearer ${token}", "X-Patchcord-Machine" = "${hostname}" }\ntool_timeout_sec = 300\n`;
     writeFileSync(configPath, existing);
     // Clean up any PATCHCORD_TOKEN we previously wrote to .env
     const envPath = join(cwd, ".env");
@@ -668,15 +891,80 @@ if (!cmd || cmd === "install" || cmd === "agent" || cmd === "--token" || cmd ===
         console.log(`  ${green}✓${r} Cleaned PATCHCORD_TOKEN from .env`);
       }
     }
-    // Slash commands (.codex/prompts/) — plain text, no YAML frontmatter
-    const codexPromptsDir = join(codexDir, "prompts");
-    mkdirSync(codexPromptsDir, { recursive: true });
-    writeFileSync(join(codexPromptsDir, "patchcord.md"), `Check patchcord inbox using the patchcord-codex MCP server. Call patchcord-codex.inbox() to see pending messages and who is online. Reply to all pending messages immediately — do the work first, then reply with what you did. After replying, call patchcord-codex.wait_for_message() to stay responsive for follow-ups. Do NOT use codex_apps tools.\n`);
-    writeFileSync(join(codexPromptsDir, "patchcord-wait.md"), `Enter patchcord listening mode using the patchcord-codex MCP server. Call patchcord-codex.wait_for_message() to block until a message arrives. When one arrives, do the work described, reply with what you did, then call patchcord-codex.wait_for_message() again. Do NOT use codex_apps tools.\n`);
+    // Clean up old per-project slash commands (deprecated in Codex v0.117+)
+    for (const dir of [join(codexDir, "prompts"), join(homedir(), ".codex", "prompts")]) {
+      for (const f of ["patchcord.md", "patchcord-wait.md"]) {
+        const p = join(dir, f);
+        if (existsSync(p)) { unlinkSync(p); }
+      }
+    }
+    // Clean up old per-project skill (now installed as global plugin)
+    const oldSkillPath = join(cwd, ".agents", "skills", "patchcord", "SKILL.md");
+    if (existsSync(oldSkillPath)) { unlinkSync(oldSkillPath); }
+
+    // Install Codex plugin at ~/.agents/plugins/patchcord/ (personal marketplace)
+    const pluginVersion = JSON.parse(readFileSync(join(pluginRoot, "package.json"), "utf-8")).version;
+    const marketplaceDir = join(homedir(), ".agents", "plugins");
+    const pluginDir = join(marketplaceDir, "patchcord");
+    mkdirSync(join(pluginDir, ".codex-plugin"), { recursive: true });
+    mkdirSync(join(pluginDir, "skills", "patchcord"), { recursive: true });
+    mkdirSync(join(pluginDir, "skills", "patchcord-wait"), { recursive: true });
+    writeFileSync(join(pluginDir, ".codex-plugin", "plugin.json"), JSON.stringify({
+      name: "patchcord",
+      version: pluginVersion,
+      description: "Cross-machine agent messaging — connect Codex, Claude Code, claude.ai, ChatGPT, and other agents across projects and machines.",
+      author: { name: "ppravdin", url: "https://patchcord.dev" },
+      homepage: "https://patchcord.dev",
+      repository: "https://github.com/ppravdin/patchcord",
+      license: "MIT",
+      keywords: ["messaging", "agents", "mcp"],
+      skills: "./skills/",
+      interface: {
+        displayName: "Patchcord",
+        shortDescription: "Cross-machine agent messaging",
+        longDescription: "Connect AI agents across machines and platforms. Send messages between Codex, Claude Code, claude.ai, ChatGPT, and other MCP-connected agents.",
+        developerName: "ppravdin",
+        category: "Productivity",
+        capabilities: ["Read", "Write"],
+        websiteURL: "https://patchcord.dev",
+        defaultPrompt: ["Check patchcord inbox for messages from other agents"],
+      },
+    }, null, 2) + "\n");
+    writeFileSync(join(pluginDir, "skills", "patchcord", "SKILL.md"),
+      readFileSync(join(pluginRoot, "per-project-skills", "codex", "SKILL.md"), "utf-8"));
+    writeFileSync(join(pluginDir, "skills", "patchcord-wait", "SKILL.md"),
+      readFileSync(join(pluginRoot, "skills", "patchcord-wait", "SKILL.md"), "utf-8"));
+
+    // Personal marketplace entry (relative path from marketplace root)
+    const marketplacePath = join(marketplaceDir, "marketplace.json");
+    let marketplace = { name: "patchcord", interface: { displayName: "Patchcord" }, plugins: [] };
+    if (existsSync(marketplacePath)) {
+      try { marketplace = JSON.parse(readFileSync(marketplacePath, "utf-8")); } catch {}
+    }
+    if (!marketplace.plugins) marketplace.plugins = [];
+    marketplace.plugins = marketplace.plugins.filter(p => p.name !== "patchcord");
+    marketplace.plugins.push({
+      name: "patchcord",
+      source: { source: "local", path: "./patchcord" },
+      policy: { installation: "INSTALLED_BY_DEFAULT", authentication: "ON_INSTALL" },
+      category: "Productivity",
+    });
+    writeFileSync(marketplacePath, JSON.stringify(marketplace, null, 2) + "\n");
+
+    // Also install global skills (working @patchcord — plugin/read broken in Codex v0.117)
+    const globalSkillDir = join(homedir(), ".agents", "skills", "patchcord");
+    mkdirSync(globalSkillDir, { recursive: true });
+    writeFileSync(join(globalSkillDir, "SKILL.md"),
+      readFileSync(join(pluginRoot, "per-project-skills", "codex", "SKILL.md"), "utf-8"));
+    const globalWaitDir = join(homedir(), ".agents", "skills", "patchcord-wait");
+    mkdirSync(globalWaitDir, { recursive: true });
+    writeFileSync(join(globalWaitDir, "SKILL.md"),
+      readFileSync(join(pluginRoot, "skills", "patchcord-wait", "SKILL.md"), "utf-8"));
+
     console.log(`\n  ${green}✓${r} Codex configured: ${dim}${configPath}${r}`);
-    console.log(`  ${green}✓${r} Slash commands: ${dim}/patchcord${r}, ${dim}/patchcord-wait${r}`);
+    console.log(`  ${green}✓${r} Plugin installed: ${dim}@patchcord${r}, ${dim}@patchcord-wait${r}`);
   } else {
-    // Claude Code: write .mcp.json (MCP server only — channel plugin disabled)
+    // Claude Code: write .mcp.json
     const mcpPath = join(cwd, ".mcp.json");
     const mcpConfig = {
       mcpServers: {
@@ -704,32 +992,48 @@ if (!cmd || cmd === "install" || cmd === "agent" || cmd === "--token" || cmd ===
       writeFileSync(mcpPath, JSON.stringify(mcpConfig, null, 2) + "\n");
     }
     console.log(`\n  ${green}✓${r} Claude Code configured: ${dim}${mcpPath}${r}`);
+
+    // Enable patchcord statusline (agent identity + inbox count in status bar)
+    try {
+      const enableScript = join(pluginRoot, "scripts", "enable-statusline.sh");
+      if (existsSync(enableScript)) {
+        execSync(`bash "${enableScript}" --full`, { stdio: "ignore" });
+        console.log(`  ${green}✓${r} Statusline enabled`);
+      }
+    } catch {}
   }
 
   // Warn about gitignore for per-project configs with tokens
-  if (!isWindsurf && !isGemini && !isZed) {
+  if (!isWindsurf && !isGemini && !isZed && !isOpenClaw && !isAntigravity && !isCline) {
     const gitignorePath = join(cwd, ".gitignore");
     const configFile = isCodex ? ".codex/config.toml" : isCursor ? ".cursor/mcp.json" : isVSCode ? ".vscode/mcp.json" : isOpenCode ? "opencode.json" : ".mcp.json";
     let needsWarning = true;
     if (existsSync(gitignorePath)) {
       const gi = readFileSync(gitignorePath, "utf-8");
-      if (gi.includes(configFile) || gi.includes(".mcp.json") || gi.includes(".codex/") || gi.includes(".cursor/")) {
-        needsWarning = false;
-      }
+      // Only check patterns relevant to this agent's config file
+      const patterns = [configFile];
+      if (isCodex) patterns.push(".codex/");
+      else if (isCursor) patterns.push(".cursor/");
+      else if (isVSCode) patterns.push(".vscode/");
+      if (patterns.some(p => gi.includes(p))) needsWarning = false;
     }
     if (needsWarning) {
       console.log(`\n  ${yellow}⚠ Add ${configFile} to .gitignore — it contains your token${r}`);
     }
   }
 
-  const toolName = isOpenCode ? "OpenCode" : isZed ? "Zed" : isVSCode ? "VS Code" : isGemini ? "Gemini CLI" : isWindsurf ? "Windsurf" : isCursor ? "Cursor" : isCodex ? "Codex" : "Claude Code";
+  const toolName = isAntigravity ? "Antigravity" : isCline ? "Cline" : isOpenClaw ? "OpenClaw" : isOpenCode ? "OpenCode" : isZed ? "Zed" : isVSCode ? "VS Code" : isGemini ? "Gemini CLI" : isWindsurf ? "Windsurf" : isCursor ? "Cursor" : isCodex ? "Codex" : "Claude Code";
 
-  if (!isWindsurf && !isGemini && !isZed) {
+  if (!isWindsurf && !isGemini && !isZed && !isOpenClaw && !isAntigravity && !isCline) {
     console.log(`\n  ${dim}To connect a second agent:${r}`);
     console.log(`  ${dim}cd into another project and run${r} ${bold}npx patchcord@latest${r} ${dim}there.${r}`);
   }
 
-  console.log(`\n${dim}Restart your ${toolName} session, then say:${r} ${bold}check inbox${r}`);
+  if (isOpenClaw) {
+    console.log(`\n${dim}Run${r} ${bold}openclaw gateway restart${r}${dim}, then tools will be available in your channels.${r}`);
+  } else {
+    console.log(`\n  ${green}→${r} ${bold}Restart your ${toolName} session${r}, then say: ${cyan}${bold}check inbox${r}`);
+  }
   process.exit(0);
 }
 

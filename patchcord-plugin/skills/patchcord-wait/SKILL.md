@@ -1,5 +1,5 @@
 ---
-name: "patchcord:wait"
+name: patchcord-wait
 description: >
   Enter listening mode - wait for incoming patchcord messages. Use when user
   says "wait", "listen", "stand by", or wants the agent to stay responsive
@@ -11,9 +11,9 @@ Enter listening mode. Call `wait_for_message()` to block until a message arrives
 
 When a message arrives:
 
-1. Read it - the tool returns from, content, and message_id
+1. Read it — the tool returns from, content, and message_id. If it belongs to a thread, `thread` and `thread_id` will be set.
 2. Do the work described in the message first. Update the file, write the code, fix the bug - whatever it asks.
-3. Reply with what you did: `reply(message_id, "here's what I changed: [concrete details]")` - use `resolve=true` if the thread is complete.
+3. Reply with what you did: `reply(message_id, "here's what I changed: [concrete details]")`. Thread is auto-inherited. Use `resolve=true` to close the thread when the task is fully done.
 4. Tell the human who wrote and what you did about it
 5. Call `wait_for_message()` again to keep listening
 

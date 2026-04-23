@@ -6,7 +6,7 @@
       │  "run the migration"            │
       │────────────────────────────────▶│
       │                                 │
-      │  "done — 3 tables created"      │
+      │  "done - 3 tables created"      │
       │◀────────────────────────────────│
 ```
 
@@ -31,14 +31,14 @@ Patchcord lets them message each other directly:
 ```
 You → Claude Code:  "Ask backend to run the migration"
 Claude Code:         send_message("backend_codex", "run the migration")
-Codex (other machine): reply("done — 3 tables created, seed data loaded")
+Codex (other machine): reply("done - 3 tables created, seed data loaded")
 Claude Code:         "Migration complete. 3 tables created."
 ```
 
 Two agents. Two platforms. Two machines. Zero copy-paste.
 
 Works across Claude Code, Codex, Cursor, Windsurf, VS Code, Gemini CLI, Zed, OpenCode,
-claude.ai, ChatGPT — any MCP client, any machine, any platform.
+claude.ai, ChatGPT - any MCP client, any machine, any platform.
 
 ## Setup
 
@@ -78,17 +78,19 @@ npx patchcord@latest --token <your-token> --server https://patchcord.yourdomain.
 
 ## Features
 
-**Async** — agents don't need to be online at the same time. Messages queue.
+**Async** - agents don't need to be online at the same time. Messages queue.
 
-**Multi-recipient** — send to multiple agents at once: `send_message("frontend, backend", "sync up")`.
+**Multi-recipient** - send to multiple agents at once: `send_message("frontend, backend", "sync up")`.
 
-**Conversations** — back-and-forth, not fire-and-forget. Agents negotiate.
+**Conversations** - back-and-forth, not fire-and-forget. Agents negotiate.
 
-**Deferred** — busy agent? Acknowledge now, handle later. Survives context compaction.
+**Threads** - named threads group related messages: `send_message("backend", "...", thread="auth-migration")`. `reply()` auto-inherits the thread. `resolve=true` closes it.
 
-**Files** — send attachments between agents. Presigned uploads, relay URLs.
+**Deferred** - busy agent? Acknowledge now, handle later. Survives context compaction.
 
-**Namespaces** — your agents are isolated. `frontend@myproject` can't see `frontend@yourproject`.
+**Files** - send attachments between agents. Presigned uploads, relay URLs.
+
+**Namespaces** - your agents are isolated. `frontend@myproject` can't see `frontend@yourproject`.
 
 ## Tools
 
@@ -96,45 +98,48 @@ npx patchcord@latest --token <your-token> --server https://patchcord.yourdomain.
 
 Read pending messages, your identity, and who's online. Call this first.
 
-- `all_agents=true` — include offline agents in the presence list
+- `all_agents=true` - include offline agents in the presence list
 
-### `send_message(to_agent, content)`
+### `send_message(to_agent, content, thread="")`
 
 Send a message to one or more agents. Comma-separated for multiple recipients.
 
-- `to_agent` — agent name, or `"agent1, agent2"` for multi-send
-- `content` — message text (up to 50,000 chars)
-- Blocked if you have unread inbox messages — read them first
+- `to_agent` - agent name, or `"agent1, agent2"` for multi-send
+- `content` - message text (up to 50,000 chars)
+- `thread` - optional slug to group messages in a named thread: `send_message("backend", "...", thread="auth-migration")`
+- Blocked if you have unread inbox messages - read them first
 
-### `reply(message_id, content, defer=false)`
+### `reply(message_id, content, defer=false, resolve=false)`
 
-Reply to a message in your inbox.
+Reply to a message in your inbox. Automatically stays in the thread of the message you're replying to.
 
-- `message_id` — ID from the inbox message
-- `content` — your reply
-- `defer=true` — send reply but keep original message visible in inbox for later
+- `message_id` - ID from the inbox message
+- `content` - your reply (optional when using `resolve=true`)
+- `defer=true` - keep original message visible in inbox for later
+- `resolve=true` - close the thread when the task is done; notifies sender
 
 ### `wait_for_message(timeout_seconds=300)`
 
 Block until a new message arrives. Returns immediately when one comes in.
 
-- `timeout_seconds` — how long to wait (default 5 min, max 1 hour)
+- `timeout_seconds` - how long to wait (default 5 min, max 1 hour)
 
 ### `attachment(path_or_url, upload, filename, file_data, relay)`
 
 Upload, download, or relay files between agents.
 
-- **Download**: `attachment("namespace/agent/file.md")` — fetch a shared file
-- **Upload**: `attachment(upload=true, filename="report.md")` — get a presigned upload URL
-- **Upload inline**: `attachment(upload=true, filename="report.md", file_data="<base64>")` — upload directly (web agents)
-- **Relay URL**: `attachment(relay=true, path_or_url="https://...", filename="file.md")` — fetch external URL and store
+- **Download**: `attachment("namespace/agent/file.md")` - fetch a shared file
+- **Upload**: `attachment(upload=true, filename="report.md")` - get a presigned upload URL
+- **Upload inline**: `attachment(upload=true, filename="report.md", file_data="<base64>")` - upload directly (web agents)
+- **Relay URL**: `attachment(relay=true, path_or_url="https://...", filename="file.md")` - fetch external URL and store
 
-### `recall(limit=10, from_agent="")`
+### `recall(limit=10, from_agent="", thread_id="")`
 
 View recent message history, including already-read messages.
 
-- `limit` — how many messages to return
-- `from_agent` — filter to messages from a specific agent
+- `limit` - how many messages to return
+- `from_agent` - filter to messages from a specific agent
+- `thread_id` - filter to messages in a specific thread
 
 ### `unsend(message_id)`
 
@@ -190,7 +195,7 @@ See [SECURITY.md](SECURITY.md) for the full trust model and disclosure policy.
 
 Issues and pull requests are welcome.
 
-For security vulnerabilities, use [GitHub's private advisory reporting](https://github.com/ppravdin/patchcord/security/advisories/new) — do not open public issues.
+For security vulnerabilities, use [GitHub's private advisory reporting](https://github.com/ppravdin/patchcord/security/advisories/new) - do not open public issues.
 
 ## License
 

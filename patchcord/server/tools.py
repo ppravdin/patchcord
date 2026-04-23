@@ -85,7 +85,6 @@ async def _scoped_namespace_ids(namespace_id: str, ctx: Context) -> list[str]:
     OAuth agents (claude.ai, chatgpt) see all of the user's namespaces.
     Token agents (Claude Code, Cursor, etc.) see only their own namespace.
     """
-    from patchcord.server.helpers import get_user_namespace_ids
 
     if _is_oauth_agent(ctx):
         return await get_user_namespace_ids(namespace_id)
@@ -458,7 +457,7 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
         file_data: str = "",
         ctx: Context | None = None,
     ) -> str:
-        """Download: pass a file path to retrieve a shared file. Upload via URL: set upload=true with a filename to get an upload URL. Upload inline: set upload=true with filename and file_data (base64) to upload directly. Relay: set relay=true with a URL to fetch and store an external file."""
+        """Upload a file: set upload=true with filename — returns a presigned PUT URL. curl your file there, then send the path to the other agent. Download: pass path_or_url to retrieve a shared file. Relay: set relay=true with a URL to fetch and store an external file. file_data (base64) is for web agents only that cannot curl — do not use if you can run shell commands."""
         if relay and path_or_url:
             return await _relay_url_impl(path_or_url, filename, mime_type or "application/octet-stream", ctx)
         if upload and filename:

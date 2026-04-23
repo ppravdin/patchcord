@@ -76,6 +76,38 @@ mcp = FastMCP(
     auth_server_provider=_oauth_provider,
 )
 
+
+# ---------------------------------------------------------------------------
+# MCP prompts → show as slash commands in Claude Code without needing plugin
+# ---------------------------------------------------------------------------
+
+
+@mcp.prompt(
+    name="inbox",
+    description="Check patchcord inbox for pending messages and see who's online",
+)
+def _prompt_inbox() -> str:
+    return (
+        "Call inbox() now. Read all pending messages. "
+        "For each message: do the work described, then reply with what you did. "
+        "Do not ask me first — just act, then report what you received and what you did about it. "
+        "If no messages, tell me who's online."
+    )
+
+
+@mcp.prompt(
+    name="wait",
+    description="Enter listening mode — wait for incoming patchcord messages",
+)
+def _prompt_wait() -> str:
+    return (
+        "Enter listening mode. Call wait_for_message() to block until a message arrives (up to 5 minutes). "
+        "When a message arrives: do the work described in it first, then reply with what you did, "
+        "then tell me who wrote and what you did. Then call wait_for_message() again to keep listening. "
+        "Loop until timeout or I interrupt. Do not ask for permission to reply — just do the work."
+    )
+
+
 # Register all @mcp.tool handlers
 from patchcord.server.tools import register as _register_tools  # noqa: E402
 
@@ -190,14 +222,16 @@ async def api_channel_poll(request: Request) -> Response:
     namespace_id, agent_id = result
 
     try:
-        rows = await _get_messages({
-            "namespace_id": f"eq.{namespace_id}",
-            "to_agent": f"eq.{agent_id}",
-            "status": f"eq.{STATUS_PENDING}",
-            "order": "created_at.asc",
-            "limit": "50",
-            "select": "id,from_agent,content,created_at,namespace_id,reply_to,encrypted",
-        })
+        rows = await _get_messages(
+            {
+                "namespace_id": f"eq.{namespace_id}",
+                "to_agent": f"eq.{agent_id}",
+                "status": f"eq.{STATUS_PENDING}",
+                "order": "created_at.asc",
+                "limit": "50",
+                "select": "id,from_agent,content,created_at,namespace_id,reply_to,encrypted",
+            }
+        )
     except Exception as exc:
         return JSONResponse({"error": http_error(exc)}, status_code=500)
 
@@ -252,13 +286,15 @@ async def api_channel_send(request: Request) -> Response:
         return JSONResponse({"error": str(exc)[:200]}, status_code=400)
 
     try:
-        msg = await _post_message({
-            "namespace_id": target_ns,
-            "from_agent": agent_id,
-            "to_agent": to_agent_resolved,
-            "content": content,
-            "status": STATUS_PENDING,
-        })
+        msg = await _post_message(
+            {
+                "namespace_id": target_ns,
+                "from_agent": agent_id,
+                "to_agent": to_agent_resolved,
+                "content": content,
+                "status": STATUS_PENDING,
+            }
+        )
     except Exception as exc:
         return JSONResponse({"error": http_error(exc)}, status_code=500)
 
@@ -289,7 +325,9 @@ async def api_channel_reply(request: Request) -> Response:
 
     # Load original message
     try:
-        originals = await _get_messages({"id": f"eq.{message_id}", "limit": "1", "select": "id,from_agent,to_agent,namespace_id,status"})
+        originals = await _get_messages(
+            {"id": f"eq.{message_id}", "limit": "1", "select": "id,from_agent,to_agent,namespace_id,status"}
+        )
     except Exception as exc:
         return JSONResponse({"error": http_error(exc)}, status_code=500)
     if not originals:
@@ -303,14 +341,16 @@ async def api_channel_reply(request: Request) -> Response:
 
     try:
         await _patch_message(message_id, {"status": "replied"})
-        msg = await _post_message({
-            "namespace_id": orig_ns,
-            "from_agent": agent_id,
-            "to_agent": original["from_agent"],
-            "content": content,
-            "reply_to": message_id,
-            "status": STATUS_PENDING,
-        })
+        msg = await _post_message(
+            {
+                "namespace_id": orig_ns,
+                "from_agent": agent_id,
+                "to_agent": original["from_agent"],
+                "content": content,
+                "reply_to": message_id,
+                "status": STATUS_PENDING,
+            }
+        )
     except Exception as exc:
         return JSONResponse({"error": http_error(exc)}, status_code=500)
 

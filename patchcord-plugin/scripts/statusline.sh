@@ -12,18 +12,6 @@ for arg in "$@"; do
     [ "$arg" = "--full" ] && FULL=true
 done
 
-find_patchcord_mcp_json() {
-    local dir="$1"
-    while [ -n "$dir" ] && [ "$dir" != "/" ]; do
-        if [ -f "$dir/.mcp.json" ]; then
-            printf '%s\n' "$dir/.mcp.json"
-            return 0
-        fi
-        dir=$(dirname "$dir")
-    done
-    return 1
-}
-
 input=$(cat)
 
 if [ -z "$input" ]; then
@@ -49,13 +37,15 @@ cwd=$(echo "$input" | jq -r '.cwd // ""')
 
 pc_token=""
 pc_url=""
-mcp_json=$(find_patchcord_mcp_json "$cwd" || true)
+mcp_json=""
+[ -f "$cwd/.mcp.json" ] && mcp_json="$cwd/.mcp.json"
 
 if [ -n "$mcp_json" ]; then
     mcp_url=$(jq -r '.mcpServers.patchcord.url // empty' "$mcp_json" 2>/dev/null || true)
     mcp_auth=$(jq -r '.mcpServers.patchcord.headers.Authorization // empty' "$mcp_json" 2>/dev/null || true)
     if [ -n "$mcp_url" ] && [ -n "$mcp_auth" ]; then
-        pc_url="${mcp_url%/mcp}"
+        pc_url="${mcp_url%/mcp/bearer}"
+        pc_url="${pc_url%/mcp}"
         pc_token="${mcp_auth#Bearer }"
     fi
 fi
@@ -132,7 +122,7 @@ fi
 line=""
 
 if $FULL; then
-    model_name=$(echo "$input" | jq -r '.model.display_name // "Claude"')
+    model_name=$(echo "$input" | jq -r 'if .model | type == "object" then .model.display_name // "Claude" elif .model | type == "string" then .model else "Claude" end' 2>/dev/null || echo "Claude")
 
     size=$(echo "$input" | jq -r '.context_window.context_window_size // 200000')
     [ "$size" -eq 0 ] 2>/dev/null && size=200000

@@ -1,0 +1,13 @@
+{
+  "name": "patchcord-marketplace",
+  "owner": {
+    "name": "ppravdin"
+  },
+  "plugins": [
+    {
+      "name": "patchcord",
+      "source": "./",
+      "description": "Cross-machine agent messaging — connect Claude Code, Codex, Cursor, ChatGPT, and other agents across projects and machines."
+    }
+  ]
+}

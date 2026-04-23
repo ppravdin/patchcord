@@ -1,19 +1,14 @@
 #!/bin/bash
 set -euo pipefail
 
-find_patchcord_mcp_json() {
-  local dir="${1:-$PWD}"
-  while [ -n "$dir" ] && [ "$dir" != "/" ]; do
-    if [ -f "$dir/.mcp.json" ]; then
-      printf '%s\n' "$dir/.mcp.json"
-      return 0
-    fi
-    dir=$(dirname "$dir")
-  done
-  return 1
-}
+# jq is required — skip silently if not installed (fresh macOS)
+command -v jq >/dev/null 2>&1 || exit 0
 
 INPUT=$(cat)
+
+# Get project cwd from Claude Code's input JSON, fall back to $PWD
+PROJECT_CWD=$(echo "$INPUT" | jq -r '.cwd // empty' 2>/dev/null || true)
+[ -z "$PROJECT_CWD" ] || [ "$PROJECT_CWD" = "null" ] && PROJECT_CWD="$PWD"
 
 # Guard against infinite loops: stop_hook_active is true when Claude
 # is already continuing because a previous Stop hook told it to.
@@ -41,7 +36,8 @@ fi
 # Resolve config from project-scoped .mcp.json only.
 TOKEN=""
 URL=""
-MCP_JSON=$(find_patchcord_mcp_json "$PWD" || true)
+MCP_JSON=""
+[ -f "$PROJECT_CWD/.mcp.json" ] && MCP_JSON="$PROJECT_CWD/.mcp.json"
 
 if [ -n "$MCP_JSON" ]; then
   MCP_URL=$(jq -r '.mcpServers.patchcord.url // empty' "$MCP_JSON" 2>/dev/null || true)
@@ -95,7 +91,7 @@ if [ -n "$NAMESPACE" ] && [ -n "$AGENT_ID" ]; then
 
   if [ -n "$SKILL_RESP" ]; then
     SKILL_TEXT=$(echo "$SKILL_RESP" | jq -r '.skill_text // empty' 2>/dev/null || true)
-    SKILL_HASH=$(echo "$SKILL_TEXT" | md5sum | cut -d' ' -f1)
+    SKILL_HASH=$(printf '%s' "$SKILL_TEXT" | (md5sum 2>/dev/null || md5 2>/dev/null) | cut -d' ' -f1 || echo "nohash")
     CACHE_FILE="/tmp/patchcord_skill_hash_${NAMESPACE}_${AGENT_ID}"
     OLD_HASH=$(cat "$CACHE_FILE" 2>/dev/null || echo "")
 
@@ -112,10 +108,20 @@ if [ -n "$NAMESPACE" ] && [ -n "$AGENT_ID" ]; then
   fi
 fi
 
-# ── Inbox notification ────────────────────────────────────────
+# ── Inbox notification (deduplicated across Stop + Notification hooks) ──
 COUNT=$(echo "$RESPONSE" | jq -r '.count // .pending_count // 0' 2>/dev/null || echo "0")
 
 if [ "$COUNT" -gt 0 ]; then
+  NOTIFY_LOCK="/tmp/patchcord_notify_lock"
+  LOCK_AGE=5
+  if [ -f "$NOTIFY_LOCK" ]; then
+    LOCK_MTIME=$(stat -c %Y "$NOTIFY_LOCK" 2>/dev/null || stat -f %m "$NOTIFY_LOCK" 2>/dev/null || echo "0")
+    NOW=$(date +%s)
+    if [ $(( NOW - LOCK_MTIME )) -lt $LOCK_AGE ]; then
+      exit 0  # Already notified within 5s
+    fi
+  fi
+  touch "$NOTIFY_LOCK"
   jq -n --arg count "$COUNT" '{
     "decision": "block",
     "reason": ($count + " patchcord message(s) waiting. Call inbox() and reply to all immediately.")

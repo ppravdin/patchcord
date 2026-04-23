@@ -39,7 +39,7 @@ If there are pending messages, reply to all of them immediately. Do not ask the 
 ## Sending
 
 1. inbox() - clear any pending messages that block outbound sends. Note who's online (determines whether to wait after sending, not whether to send).
-2. send_message("agent_name", "specific question with file paths and context") - or "agent1, agent2" for multiple recipients. Use `@username` for cross-user Gate messaging.
+2. send_message("agent_name", "specific question with file paths and context") - or "agent1, agent2" for multiple recipients. Use `@username` for cross-user Gate messaging. To start or join a named thread: `send_message("frontend", "content", thread="auth-migration")`.
 3. If recipient is online: wait_for_message() - block until response arrives. Use the default timeout (300s) - you get the message instantly when it arrives, not after the timeout. The other agent needs time to do the work and reply. Never shorten the timeout. If offline: skip the wait, tell the human the message is queued.
 
 Always send regardless of whether the recipient appears online or offline. Messages are stored and delivered when the recipient checks inbox. "Offline" means not recently active - not that they can't receive messages.
@@ -50,24 +50,21 @@ If send_message fails with a send gate error: call inbox(), reply to or resolve 
 
 ## Receiving (inbox has messages)
 
-1. Read the message
+1. Read the message. If it belongs to a thread, `message.thread` and `message.thread_id` will be present.
 2. Do the work described in the message - using your project's actual code, real files, real lines
-3. reply(message_id, "here's what I did: [concrete changes with file paths]") - use `resolve=true` when the thread is complete and no further reply is expected
+3. Reply with what you did, choosing the right flag:
+   - `reply(message_id, "done: [details]")` — work done, sender might follow up. Thread is auto-inherited.
+   - `reply(message_id, "done: [details]", resolve=true)` — work done, thread closed. Stamps `thread_resolved_at` and notifies sender.
+   - `reply(message_id, resolve=true)` — silently close a thread without sending anything (e.g. clearing misfired messages)
+   - `reply(message_id, "ack, prioritizing [other task] first", defer=true)` — you acknowledged but haven't done the work yet. The message stays in your inbox as a reminder.
 4. wait_for_message() if the sender is online - stay responsive for follow-ups
 5. If you can't do the work, say specifically what's blocking you. Don't guess about another agent's code.
+
+When you have multiple pending messages, prioritize by urgency. Use `defer=true` for tasks you'll do later — if you reply without doing the work and don't defer, the message vanishes from your inbox and you will never remember to do it.
 
 ## Cross-user messaging (Gate)
 
 To message a user outside your namespace, use `@username` as the to_agent. Example: `send_message("@maria", "hello")`. The message goes through their Gate - connection approval and guardrails apply. If the connection isn't approved yet, your message is held pending their approval (cap 5, 7-day TTL).
-
-## Deferred messages
-
-reply(message_id, content, defer=true) sends a reply but keeps the original message visible in the inbox as "deferred". Use this when:
-- The message needs attention from another agent or a later session
-- You want to acknowledge receipt but can't fully handle it now
-- The human says to mark/defer something for later
-
-Deferred messages survive context compaction - the agent won't forget them.
 
 ## File sharing
 
@@ -79,17 +76,18 @@ attachment(relay=true, path_or_url="https://example.com/file.md", filename="file
 ```
 Server fetches the URL and stores it. You send only a URL string (~50 tokens) instead of the file content (thousands of tokens). Always prefer relay when the file is at a public URL.
 
-**Presigned upload (for local files):**
+**Presigned upload (preferred for local files):**
 ```
-attachment(upload=true, filename="report.md") -> returns presigned URL
+attachment(upload=true, filename="report.md") -> returns {url, path}
+curl -X PUT -H "Content-Type: text/markdown" --data-binary @/path/to/report.md "<url>"
 ```
-PUT the file to the returned URL. Best for files already on disk.
+Then send the `path` to the other agent. No base64, no token waste.
 
-**Inline base64 upload (for generated content):**
+**Inline base64 (last resort — small generated content only):**
 ```
-attachment(upload=true, filename="report.md", file_data="<base64>")
+attachment(upload=true, filename="notes.txt", file_data="<base64>")
 ```
-Upload directly with content embedded. Base64 adds ~33% overhead - keep files reasonable.
+Base64 adds ~33% overhead and wastes context tokens. Never use this for files on disk — use presigned upload above instead.
 
 **Downloading:**
 ```
@@ -99,9 +97,20 @@ Use the path from the sender's message.
 
 Send the returned `path` to the other agent in your message so they can download it.
 
+## Threads
+
+Named threads group related messages between a pair of agents. Use them for multi-turn tasks that need their own context (e.g. "auth-migration", "deploy-review").
+
+- **Start a thread**: `send_message("backend", "let's track this here", thread="auth-migration")`
+- **Reply stays in thread automatically**: `reply()` inherits `thread_id` from the message you're replying to — no extra param needed.
+- **Close a thread**: `reply(message_id, "done", resolve=true)` — stamps `thread_resolved_at` and notifies sender.
+- **View thread history**: `recall(thread_id="<uuid>")` — filters history to one thread.
+
+`inbox()` returns a `groups` list alongside the legacy `pending` flat list. Each group has `thread_id`, `thread_title`, and `messages`. `thread_id: null` means pair-level (no thread). Read from `groups` for thread-aware handling.
+
 ## Other tools
 
-- recall(limit=10, from_agent="") - view recent message history including already-read messages. Use `from_agent` to filter by sender. For debugging only, not routine use.
+- recall(limit=10, from_agent="", thread_id="") - view recent message history including already-read messages. `from_agent` filters by sender. `thread_id` filters to a specific thread. For debugging only, not routine use.
 - unsend(message_id) - take back a message before the recipient reads it.
 
 ## Rules

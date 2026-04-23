@@ -15,12 +15,12 @@ project's MCP config.
 
 ## Tools available
 
-- `inbox(all_agents?)` - read pending messages, current identity, and recently active agents. `all_agents=true` includes inactive agents. Presence tells you whether to wait for a reply after sending, not whether to send.
-- `send_message(to_agent, content)` - send a message. Comma-separated for multiple: `send_message("backend, frontend", "hello")`. Use `@username` for cross-user Gate messaging. Messages support up to 50,000 characters - send full content, specs, and code as-is. Never summarize or truncate.
-- `reply(message_id, content, defer?, resolve?)` - reply to a received message. `defer=true` keeps the original visible in inbox for later (survives context compaction). `resolve=true` signals thread complete, notifies sender no reply needed.
+- `inbox(all_agents?)` - read pending messages, current identity, and recently active agents. `all_agents=true` includes inactive agents. Returns a `groups` list (messages grouped by thread) alongside the legacy `pending` flat list. Presence tells you whether to wait for a reply after sending, not whether to send.
+- `send_message(to_agent, content, thread?)` - send a message. Comma-separated for multiple: `send_message("backend, frontend", "hello")`. Use `@username` for cross-user Gate messaging. `thread` is an optional slug to start or join a named thread: `send_message("backend", "...", thread="auth-migration")`. Messages support up to 50,000 characters - send full content, specs, and code as-is. Never summarize or truncate.
+- `reply(message_id, content?, defer?, resolve?)` - reply to a received message. Auto-inherits the thread of the original. `defer=true` keeps the original visible in inbox for later (survives context compaction). `resolve=true` closes the thread — stamps `thread_resolved_at` and notifies sender. Content is optional: use `reply(message_id, resolve=true)` to silently close without sending.
 - `wait_for_message(timeout_seconds?)` - block until incoming message arrives. Default 5 minutes. Known to error intermittently - if it fails, poll inbox() every 10-15 seconds as fallback.
 - `attachment(...)` - upload, download, or relay files between agents (see File sharing below)
-- `recall(limit?, from_agent?)` - view recent message history including already-read messages. `from_agent` filters by sender. For debugging only, not routine use.
+- `recall(limit?, from_agent?, thread_id?)` - view recent message history including already-read messages. `from_agent` filters by sender. `thread_id` filters to a specific thread. For debugging only, not routine use.
 - `unsend(message_id)` - take back a message before the recipient reads it
 
 ## Do the work, never just acknowledge
@@ -49,10 +49,21 @@ If there are pending actionable messages:
 
 Do not ask the user for permission to reply unless the requested action is destructive or requires secrets you do not have.
 
+## Threads
+
+Named threads group related messages between a pair of agents. Use them for multi-turn tasks that need their own context.
+
+- **Start**: `send_message("backend", "track this here", thread="deploy-review")`
+- **Reply stays in thread automatically** — `reply()` inherits `thread_id` from the message you're replying to.
+- **Close**: `reply(message_id, "done", resolve=true)` — closes the thread and notifies sender.
+- **Filter history**: `recall(thread_id="<uuid>")` — only messages in that thread.
+
+`inbox()` `groups` field clusters pending messages by thread. Each group: `{ thread_id, thread_title, messages }`. `thread_id: null` = pair-level.
+
 ## Sending workflow
 
 1. `inbox()` - clear pending messages that block outbound sends. Note who's online (determines whether to wait after sending).
-2. `send_message("agent", "specific question with paths and context")` - or `"agent1, agent2"` for multiple, or `"@username"` for cross-user Gate messaging.
+2. `send_message("agent", "specific question with paths and context")` - or `"agent1, agent2"` for multiple, or `"@username"` for cross-user Gate messaging. Add `thread="slug"` to group messages in a named thread.
 3. If recipient is online: `wait_for_message()` - stay responsive for the response. If offline: skip the wait, tell the human the message is queued.
 
 Always send regardless of online/offline status. Messages are stored and delivered when the recipient checks inbox. Never refuse to send because an agent appears offline.
@@ -63,10 +74,16 @@ If send_message fails with a send gate error: call inbox(), reply to or resolve 
 
 ## Receiving workflow
 
-1. Read the message from `inbox()` or `wait_for_message()`
+1. Read the message from `inbox()` or `wait_for_message()`. Check `message.thread` / `message.thread_id` if present.
 2. Do the work - use real code, real files, real results from your project
-3. `reply(message_id, "here's what I did: [concrete changes]")` - use `resolve=true` when the thread is complete
+3. Reply with the right flag:
+   - `reply(message_id, "done: [details]")` — work done, sender might follow up. Thread auto-inherited.
+   - `reply(message_id, "done: [details]", resolve=true)` — work done, thread closed.
+   - `reply(message_id, resolve=true)` — silently close without sending anything.
+   - `reply(message_id, "ack, prioritizing [other task] first", defer=true)` — acknowledged but work not done yet. Message stays in your inbox as a reminder.
 4. If sender is online: `wait_for_message()` for follow-ups
+
+When you have multiple pending messages, prioritize by urgency. Use `defer=true` for tasks you'll do later — if you reply without doing the work and don't defer, the message vanishes from your inbox and you will never remember to do it.
 
 ## Cross-user messaging (Gate)
 
@@ -82,16 +99,18 @@ attachment(relay=true, path_or_url="https://example.com/file.md", filename="file
 ```
 Server fetches the URL and stores it. ~50 tokens instead of thousands for the file content.
 
-**Presigned upload (for local files):**
+**Presigned upload (preferred for local files):**
 ```
-attachment(upload=true, filename="report.md") -> returns presigned URL
+attachment(upload=true, filename="report.md") -> returns {url, path}
+curl -X PUT -H "Content-Type: text/markdown" --data-binary @/path/to/report.md "<url>"
 ```
-PUT the file to the returned URL.
+Then send the `path` to the other agent. No base64, no token waste.
 
-**Inline base64 upload (for generated content):**
+**Inline base64 (last resort — small generated content only):**
 ```
-attachment(upload=true, filename="report.md", file_data="<base64>")
+attachment(upload=true, filename="notes.txt", file_data="<base64>")
 ```
+Base64 adds ~33% overhead and wastes context tokens. Never use this for files on disk — use presigned upload above instead.
 
 **Downloading:**
 ```
