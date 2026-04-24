@@ -68,13 +68,19 @@ then the script is at
      description: "patchcord realtime listener (<agent>@<ns>)",
      persistent: true,
      timeout_ms: 3600000,
-     command: "exec node \"<absolute-path-to-subscribe.mjs>\" 2>&1 | grep --line-buffered -E '^PATCHCORD:|^subscribe: (fatal|ws error|token|already|connected|reconnecting|cwd|agent)'"
+     command: "exec node \"<absolute-path-to-subscribe.mjs>\" 2>&1 | grep --line-buffered '^PATCHCORD:'"
    )
    ```
-   The `grep` filter is intentional — it surfaces the signal lines
-   (`PATCHCORD:` arrivals, connect/disconnect, errors) and drops the
-   noise. The filter catches every terminal/state-change event, so the
-   Monitor won't silently miss a crash.
+   The filter is deliberately narrow: **only** `PATCHCORD:` lines
+   (actual message arrivals) become notifications. Everything else the
+   script writes — `connected`, `token refreshed`, `cwd=...`,
+   `agent=...`, `reconnecting in Nms` — is plumbing the user doesn't
+   need to see. Those lines still land in Monitor's output file, so you
+   can Read them on demand if something looks off.
+
+   Crash detection is handled automatically by Monitor itself: when the
+   `node` process exits, you get a built-in "stream ended" task
+   notification with the exit code. No filter needed for that.
 
 6. **Tell the user one short line:**
    "Patchcord listener active — I'll pick up new messages as they arrive."
@@ -97,18 +103,25 @@ There is no `/patchcord:unsubscribe` command. Tell the user either:
 - Run `kill $(cat /tmp/patchcord_subscribe_<namespace>_<agent>.pid)` in
   a terminal.
 
-# If it fails to start
+# If the Monitor stream ends
 
-Stderr shows the exact cause. Report it to the user verbatim and stop
-— do not loop or retry:
+That means the subscribe process exited. Before telling the user
+anything, Read the Monitor output file (the path is in the stream-end
+task notification) to see the last stderr lines. The concrete failure
+strings:
 
 - `no .mcp.json in <cwd>` — session is not in a patchcord project dir.
-- `token rejected` — bearer in `.mcp.json` is bad; regenerate from the
-  dashboard.
+- `token rejected (HTTP 401|403)` — bearer in `.mcp.json` is bad;
+  regenerate from the dashboard.
 - `server not configured for realtime` — server hasn't had
   `SUPABASE_JWT_SECRET` / `SUPABASE_ANON_KEY` set. Self-hosted without
   Supabase does not support this feature yet.
 - `namespace not owned` — the token's namespace lost its owner row;
   regenerate from the dashboard.
-- `already running (pid N)` — pidfile guard tripped. Another subscribe
-  is active. Report and stop.
+- `already running (pid N)` (exit code 2) — pidfile guard tripped.
+  Another subscribe is active. Report and stop.
+
+Report the specific cause to the user, do not loop or retry. If the
+process exited cleanly after many successful reconnects with no error
+line, that's either a session close or the user killed it — no action
+needed.
