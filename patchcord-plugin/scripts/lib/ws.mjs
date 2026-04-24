@@ -68,7 +68,7 @@ export function connect(urlStr, { headers = {} } = {}) {
   socket.on("close", () => {
     if (!closed) {
       closed = true;
-      emitter.emit("close");
+      emitter.emit("close", { code: null, reason: "socket-ended" });
     }
   });
 
@@ -115,8 +115,16 @@ export function connect(urlStr, { headers = {} } = {}) {
       if (opcode === 0x1) {
         emitter.emit("message", payload.toString("utf8"));
       } else if (opcode === 0x8) {
-        // close frame
-        emitter.emit("close");
+        // close frame — parse code/reason for diagnostics
+        let code = null;
+        let reason = "";
+        if (payload.length >= 2) {
+          code = payload.readUInt16BE(0);
+          if (payload.length > 2) {
+            reason = payload.slice(2).toString("utf8");
+          }
+        }
+        emitter.emit("close", { code, reason });
         closed = true;
         try {
           socket.write(encodeFrame(0x8, closePayload(1000, ""), true));

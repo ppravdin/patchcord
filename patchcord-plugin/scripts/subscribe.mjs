@@ -246,14 +246,29 @@ function runOnce(ticket, baseUrl, token, refreshTicket) {
         } catch (_) {}
       }, HEARTBEAT_INTERVAL_MS);
 
-      const refreshIn = Math.max(
-        (ticket.jwt_expires_in - JWT_REFRESH_SAFETY_MARGIN_SEC) * 1000,
-        30_000
-      );
-      refreshTimer = setTimeout(async () => {
+      const scheduleRefresh = (ttlSec) => {
+        const refreshIn = Math.max((ttlSec - JWT_REFRESH_SAFETY_MARGIN_SEC) * 1000, 30_000);
+        refreshTimer = setTimeout(doRefresh, refreshIn);
+      };
+
+      const doRefresh = async () => {
+        if (settled) return;
         try {
           const fresh = await refreshTicket();
           currentJwt = fresh.jwt;
+          // Socket-level auth update (phoenix topic) — what Supabase
+          // actually uses for the connection's own JWT expiry check.
+          // Without this, the server closes the socket at the original
+          // JWT's exp regardless of per-channel updates.
+          ws.send(
+            JSON.stringify({
+              topic: "phoenix",
+              event: "access_token",
+              payload: { access_token: currentJwt },
+              ref: String(ref++),
+            })
+          );
+          // Channel-level updates — matches supabase-js's setAuth() pattern.
           for (const topic of fresh.topics) {
             ws.send(
               JSON.stringify({
@@ -265,11 +280,17 @@ function runOnce(ticket, baseUrl, token, refreshTicket) {
             );
           }
           process.stderr.write("subscribe: token refreshed\n");
+          scheduleRefresh(fresh.jwt_expires_in);
         } catch (e) {
-          process.stderr.write(`subscribe: token refresh failed: ${e.message}\n`);
-          done(e);
+          // Transient network/server error — do NOT close the live
+          // connection. The current JWT is still valid for ~2 more min
+          // (JWT_REFRESH_SAFETY_MARGIN_SEC). Retry sooner.
+          process.stderr.write(`subscribe: token refresh failed, retrying in 30s: ${e.message}\n`);
+          refreshTimer = setTimeout(doRefresh, 30_000);
         }
-      }, refreshIn);
+      };
+
+      scheduleRefresh(ticket.jwt_expires_in);
     });
 
     ws.on("message", (raw) => {
@@ -297,8 +318,10 @@ function runOnce(ticket, baseUrl, token, refreshTicket) {
       done(err);
     });
 
-    ws.on("close", () => {
-      process.stderr.write("subscribe: ws closed\n");
+    ws.on("close", (info) => {
+      const codeStr = info?.code != null ? `code=${info.code}` : "code=none";
+      const reasonStr = info?.reason ? ` reason=${JSON.stringify(info.reason)}` : "";
+      process.stderr.write(`subscribe: ws closed (${codeStr}${reasonStr})\n`);
       done();
     });
   });
