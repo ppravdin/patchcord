@@ -12,42 +12,80 @@ description: >
 
 Spawns `scripts/subscribe.mjs` in the background. The script holds a
 WebSocket to Supabase Realtime and prints one line to stdout per new
-`agent_messages` INSERT for this agent. Claude Code's Monitor tool picks
-up each line as a notification; Claude wakes up and calls `inbox()`.
+`agent_messages` INSERT for this agent. Claude Code's `Monitor` tool
+picks up each line as a notification; Claude wakes up and calls
+`inbox()`.
 
 No polling, no tokens burned while idle. The process stays alive until
 the user kills it or closes the Claude Code session.
 
-# Starting
+# How to find the script path (read carefully — this is the one thing that trips agents up)
 
-1. Find namespace + agent_id. Call `mcp__patchcord__inbox` if you don't
-   already know them from this session. The response contains `namespace_id`
-   and `agent_id`.
-2. Compute pidfile: `/tmp/patchcord_subscribe_<namespace_id>_<agent_id>.pid`.
-3. Check if a listener is already running:
-   - If the pidfile exists AND `kill -0 $(cat <pidfile>)` succeeds →
-     tell the user "Patchcord listener already active (pid N)" and stop.
-     Do NOT spawn another one.
-   - If the pidfile exists but the PID is dead → the subscribe script
-     itself cleans up stale pidfiles on startup, so just proceed.
-4. Find the script at `$CLAUDE_PLUGIN_ROOT/scripts/subscribe.mjs`.
-5. Run it in the background with Bash `run_in_background: true`:
+At the top of the skill invocation message, Claude Code shows a header:
+`Base directory for this skill: <ABSOLUTE_PATH>/skills/subscribe`
+
+Take that path, strip `/skills/subscribe` from the end — you now have the
+plugin root. The script is at `<PLUGIN_ROOT>/scripts/subscribe.mjs`.
+
+**Do not rely on `$CLAUDE_PLUGIN_ROOT`** — it is often unset inside
+the Bash shell even when the skill is running. Always derive the path
+from the "Base directory for this skill" header you were given.
+
+Example: if the header says
+`Base directory for this skill: /home/user/.npm/_npx/abc123/node_modules/patchcord/skills/subscribe`
+then the script is at
+`/home/user/.npm/_npx/abc123/node_modules/patchcord/scripts/subscribe.mjs`.
+
+# Starting (step by step)
+
+1. **Know your identity.** If you don't already have `namespace_id` and
+   `agent_id` from this session, call `mcp__patchcord__inbox` once — the
+   response starts with `<agent>@<namespace> | N pending` and you can
+   read both off that line.
+
+2. **Compute the pidfile path:**
+   `/tmp/patchcord_subscribe_<namespace_id>_<agent_id>.pid`
+
+3. **Check for an existing listener.** One Bash call:
+   ```bash
+   PF=/tmp/patchcord_subscribe_<ns>_<agent>.pid
+   if [ -f "$PF" ] && kill -0 "$(cat "$PF")" 2>/dev/null; then
+     echo "ALREADY_RUNNING pid=$(cat "$PF")"
+   else
+     echo "OK_TO_SPAWN"
+   fi
    ```
-   node "$CLAUDE_PLUGIN_ROOT/scripts/subscribe.mjs"
+   If output is `ALREADY_RUNNING`, tell the user "Patchcord listener
+   already active (pid N)" and STOP. Do not spawn another one.
+
+4. **Resolve the script path** using the recipe above.
+
+5. **Spawn under Monitor** — not Bash with `run_in_background`. Monitor
+   is the right tool because every stdout line becomes a notification.
+   Example call shape:
    ```
-6. Attach the `Monitor` tool to that background shell so its stdout
-   becomes a stream of notifications.
-7. Tell the user one short line:
+   Monitor(
+     description: "patchcord realtime listener (<agent>@<ns>)",
+     persistent: true,
+     timeout_ms: 3600000,
+     command: "exec node \"<absolute-path-to-subscribe.mjs>\" 2>&1 | grep --line-buffered -E '^PATCHCORD:|^subscribe: (fatal|ws error|token|already|connected|reconnecting|cwd|agent)'"
+   )
+   ```
+   The `grep` filter is intentional — it surfaces the signal lines
+   (`PATCHCORD:` arrivals, connect/disconnect, errors) and drops the
+   noise. The filter catches every terminal/state-change event, so the
+   Monitor won't silently miss a crash.
+
+6. **Tell the user one short line:**
    "Patchcord listener active — I'll pick up new messages as they arrive."
 
 # When a notification fires
 
-Monitor surfaces a line like `PATCHCORD: 1 new from backend`. Do this:
+Monitor surfaces `PATCHCORD: 1 new from <sender>`. Do this:
 
-1. Say one brief line in chat so the user can see you got pinged:
-   "Got a Patchcord ping from <sender> — checking inbox."
+1. Say one brief line: "Got a Patchcord ping from <sender> — checking inbox."
 2. Call `mcp__patchcord__inbox`.
-3. For each pending message: do the work first (follow the
+3. For each pending message, do the work first (follow the
    patchcord:inbox skill), then reply with what you did.
 4. Return to listening — Monitor keeps running.
 
@@ -55,26 +93,22 @@ Monitor surfaces a line like `PATCHCORD: 1 new from backend`. Do this:
 
 There is no `/patchcord:unsubscribe` command. Tell the user either:
 
-- Close this Claude Code session (the background process will keep
-  running unless they kill it — see below), OR
+- Close this Claude Code session, OR
 - Run `kill $(cat /tmp/patchcord_subscribe_<namespace>_<agent>.pid)` in
   a terminal.
 
 # If it fails to start
 
-The script exits 1 with a clear stderr message in these cases:
+Stderr shows the exact cause. Report it to the user verbatim and stop
+— do not loop or retry:
 
-- `no .mcp.json in <cwd>` — the Claude session is not in a patchcord
-  project directory.
-- `token rejected` — the bearer in `.mcp.json` is bad; regenerate from
-  the dashboard.
-- `server not configured for realtime` — the server hasn't had
-  `SUPABASE_JWT_SECRET` / `SUPABASE_ANON_KEY` set. This is a cloud-only
-  feature for now. Tell the user.
+- `no .mcp.json in <cwd>` — session is not in a patchcord project dir.
+- `token rejected` — bearer in `.mcp.json` is bad; regenerate from the
+  dashboard.
+- `server not configured for realtime` — server hasn't had
+  `SUPABASE_JWT_SECRET` / `SUPABASE_ANON_KEY` set. Self-hosted without
+  Supabase does not support this feature yet.
 - `namespace not owned` — the token's namespace lost its owner row;
   regenerate from the dashboard.
-- `already running (pid N)` — another subscribe is already active.
-  Report that to the user, do not try again.
-
-In all of these, report the exact error to the user and stop — don't
-loop or retry.
+- `already running (pid N)` — pidfile guard tripped. Another subscribe
+  is active. Report and stop.
