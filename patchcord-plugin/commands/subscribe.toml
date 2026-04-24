@@ -1,0 +1,1 @@
+prompt = "Start the Patchcord background listener per the patchcord:subscribe skill. Spawn scripts/subscribe.mjs with run_in_background, attach the Monitor tool to its stdout, and when a 'PATCHCORD:' line appears, announce it briefly and call inbox() to handle any new messages."
