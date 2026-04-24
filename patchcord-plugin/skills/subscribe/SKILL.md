@@ -68,19 +68,19 @@ then the script is at
      description: "patchcord realtime listener (<agent>@<ns>)",
      persistent: true,
      timeout_ms: 3600000,
-     command: "exec node \"<absolute-path-to-subscribe.mjs>\" 2>&1 | grep --line-buffered '^PATCHCORD:'"
+     command: "exec node \"<absolute-path-to-subscribe.mjs>\""
    )
    ```
-   The filter is deliberately narrow: **only** `PATCHCORD:` lines
-   (actual message arrivals) become notifications. Everything else the
-   script writes — `connected`, `token refreshed`, `cwd=...`,
-   `agent=...`, `reconnecting in Nms` — is plumbing the user doesn't
-   need to see. Those lines still land in Monitor's output file, so you
-   can Read them on demand if something looks off.
+   No `2>&1`, no grep filter. By construction the script only writes
+   `PATCHCORD: ...` lines to stdout. Everything else — `connected`,
+   `token refreshed`, startup diagnostics, errors — goes to stderr,
+   which Monitor captures into its output file but does NOT fire as
+   notifications. So there's nothing to filter and no way to get the
+   filter wrong.
 
    Crash detection is handled automatically by Monitor itself: when the
-   `node` process exits, you get a built-in "stream ended" task
-   notification with the exit code. No filter needed for that.
+   process exits, Monitor emits a built-in "stream ended" task
+   notification with the output file path and exit code.
 
 6. **Tell the user one short line:**
    "Patchcord listener active — I'll pick up new messages as they arrive."
@@ -103,25 +103,45 @@ There is no `/patchcord:unsubscribe` command. Tell the user either:
 - Run `kill $(cat /tmp/patchcord_subscribe_<namespace>_<agent>.pid)` in
   a terminal.
 
-# If the Monitor stream ends
+# If the Monitor stream ends — STRICT PROTOCOL
 
-That means the subscribe process exited. Before telling the user
-anything, Read the Monitor output file (the path is in the stream-end
-task notification) to see the last stderr lines. The concrete failure
-strings:
+The stream-end task notification includes the path to Monitor's output
+file. Do exactly this, in this order:
+
+1. Read that output file using the Read tool.
+2. Look at the last ~15 lines for a line matching one of the known
+   failure strings below. There will always be at least one terminal
+   error line — the script's error handlers guarantee it.
+3. Report the specific cause to the user in one short sentence.
+4. STOP.
+
+**Forbidden on failure — do not do any of these:**
+- Do NOT run `pgrep`, `ps`, `kill`, `pkill`, `killall`, or any command
+  that targets PIDs or process names.
+- Do NOT modify, delete, or write to the pidfile yourself. The script
+  manages it; it's already cleaned up by the time Monitor emits the
+  stream-end event.
+- Do NOT spawn another Monitor or another `node subscribe.mjs`. One
+  failure means something is wrong with the config or environment;
+  respawning will not fix it and will make things worse.
+- Do NOT search for orphaned processes or try to "clean up" state.
+
+Concrete failure strings you may see and what they mean:
 
 - `no .mcp.json in <cwd>` — session is not in a patchcord project dir.
-- `token rejected (HTTP 401|403)` — bearer in `.mcp.json` is bad;
-  regenerate from the dashboard.
-- `server not configured for realtime` — server hasn't had
-  `SUPABASE_JWT_SECRET` / `SUPABASE_ANON_KEY` set. Self-hosted without
-  Supabase does not support this feature yet.
-- `namespace not owned` — the token's namespace lost its owner row;
-  regenerate from the dashboard.
-- `already running (pid N)` (exit code 2) — pidfile guard tripped.
-  Another subscribe is active. Report and stop.
+  Tell the user which directory to `cd` into.
+- `ticket: token rejected (HTTP 401|403)` — bearer in `.mcp.json` is
+  bad; regenerate from the dashboard.
+- `ticket: server not configured for realtime` — the patchcord server
+  hasn't had `SUPABASE_JWT_SECRET` / `SUPABASE_ANON_KEY` set. This is
+  a cloud-only feature.
+- `ticket: namespace not owned — regenerate your token` — the token's
+  namespace lost its owner row; regenerate from the dashboard.
+- `already running (pid N)` (exit code 2) — pidfile guard tripped,
+  another listener is active. Report and stop. Do NOT kill the other
+  listener to make room.
+- `subscribe: fatal: ...` — unhandled error. Show the user the line
+  verbatim, stop.
 
-Report the specific cause to the user, do not loop or retry. If the
-process exited cleanly after many successful reconnects with no error
-line, that's either a session close or the user killed it — no action
-needed.
+If the process exited cleanly (exit 0) with no error line, the user
+closed the session or killed the process. Nothing to do.

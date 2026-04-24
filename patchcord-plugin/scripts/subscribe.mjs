@@ -17,6 +17,17 @@ const JWT_REFRESH_SAFETY_MARGIN_SEC = 120;
 const HEARTBEAT_INTERVAL_MS = 25_000;
 const RECONNECT_BACKOFF_MS = [1000, 2000, 4000, 8000, 15_000, 30_000];
 
+// Guarantee a terminal stderr line on any unhandled failure so the agent
+// reading Monitor's output file always sees WHY the process died.
+process.on("uncaughtException", (err) => {
+  process.stderr.write(`subscribe: fatal: uncaught: ${err?.stack || err?.message || err}\n`);
+  process.exit(1);
+});
+process.on("unhandledRejection", (err) => {
+  process.stderr.write(`subscribe: fatal: unhandled rejection: ${err?.stack || err?.message || err}\n`);
+  process.exit(1);
+});
+
 function die(msg, code = 1) {
   process.stderr.write(msg + "\n");
   process.exit(code);
