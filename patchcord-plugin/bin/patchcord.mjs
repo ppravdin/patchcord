@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { existsSync, mkdirSync, cpSync, readdirSync } from "fs";
-import { join, dirname } from "path";
+import { join, dirname, basename } from "path";
 import { fileURLToPath } from "url";
 import { execSync } from "child_process";
 import { homedir } from "os";
@@ -80,7 +80,8 @@ if (cmd === "plugin-path") {
 if (!cmd || cmd === "install" || cmd === "agent" || cmd === "--token" || cmd === "--no-browser" || cmd === "--server") {
   const flags = cmd?.startsWith("--") ? process.argv.slice(2) : process.argv.slice(3);
   const fullStatusline = flags.includes("--full");
-  const { readFileSync, writeFileSync, unlinkSync } = await import("fs");
+  let wasPluginInstalled = false;
+  const { readFileSync, writeFileSync, unlinkSync, rmSync } = await import("fs");
 
   function safeReadJson(filePath) {
     try {
@@ -115,11 +116,18 @@ if (!cmd || cmd === "install" || cmd === "agent" || cmd === "--token" || cmd ===
   // Claude Code
   const hasClaude = run("which claude");
   if (hasClaude) {
+    // Remove legacy npm-cache install (pre-marketplace era) — causes duplicate /patchcord commands.
+    const npmCachePatchcord = join(HOME, ".claude", "plugins", "npm-cache", "node_modules", "patchcord");
+    if (existsSync(npmCachePatchcord)) {
+      try { rmSync(npmCachePatchcord, { recursive: true, force: true }); } catch {}
+    }
+
     // Always re-add marketplace (copies fresh files from this npx package)
     // and install/update plugin. Claude Code's built-in plugin update
     // doesn't detect new versions from local sources (#37252).
     run(`claude plugin marketplace add "${pluginRoot}"`);
     const installed = run(`claude plugin list`)?.includes("patchcord");
+    wasPluginInstalled = !!installed;
     if (installed) {
       run(`claude plugin update patchcord@patchcord-marketplace`);
       globalChanges.push("Claude Code plugin updated");
@@ -155,12 +163,16 @@ if (!cmd || cmd === "install" || cmd === "agent" || cmd === "--token" || cmd ===
       }
     }
 
-    const enableScript = join(pluginRoot, "scripts", "enable-statusline.sh");
-    if (existsSync(enableScript)) {
-      const slArg = fullStatusline ? " --full" : "";
-      const slResult = run(`bash "${enableScript}"${slArg}`);
-      if (slResult !== null && slResult.includes("statusline")) {
-        globalChanges.push(`Statusline${fullStatusline ? " (full)" : ""} enabled`);
+    // Statusline: enabled later in the Claude Code project-setup branch (prompts user).
+    // If --full flag passed non-interactively, install eagerly here so non-Claude-Code
+    // flows (e.g. setting up Codex on a machine with Claude Code) still get the upgrade.
+    if (fullStatusline) {
+      const enableScript = join(pluginRoot, "scripts", "enable-statusline.sh");
+      if (existsSync(enableScript)) {
+        const slResult = run(`bash "${enableScript}" --full`);
+        if (slResult !== null && slResult.includes("statusline")) {
+          globalChanges.push("Statusline (full) enabled");
+        }
       }
     }
   }
@@ -173,12 +185,12 @@ if (!cmd || cmd === "install" || cmd === "agent" || cmd === "--token" || cmd ===
     let cursorChanged = false;
     if (!existsSync(cursorSkillDir)) {
       mkdirSync(cursorSkillDir, { recursive: true });
-      cpSync(join(pluginRoot, "skills", "patchcord", "SKILL.md"), join(cursorSkillDir, "SKILL.md"));
+      cpSync(join(pluginRoot, "skills", "inbox", "SKILL.md"), join(cursorSkillDir, "SKILL.md"));
       cursorChanged = true;
     }
     if (!existsSync(cursorWaitDir)) {
       mkdirSync(cursorWaitDir, { recursive: true });
-      cpSync(join(pluginRoot, "skills", "patchcord-wait", "SKILL.md"), join(cursorWaitDir, "SKILL.md"));
+      cpSync(join(pluginRoot, "skills", "wait", "SKILL.md"), join(cursorWaitDir, "SKILL.md"));
       cursorChanged = true;
     }
     if (cursorChanged) globalChanges.push("Cursor skills installed");
@@ -191,12 +203,12 @@ if (!cmd || cmd === "install" || cmd === "agent" || cmd === "--token" || cmd ===
     let windsurfChanged = false;
     if (!existsSync(windsurfSkillDir)) {
       mkdirSync(windsurfSkillDir, { recursive: true });
-      cpSync(join(pluginRoot, "skills", "patchcord", "SKILL.md"), join(windsurfSkillDir, "SKILL.md"));
+      cpSync(join(pluginRoot, "skills", "inbox", "SKILL.md"), join(windsurfSkillDir, "SKILL.md"));
       windsurfChanged = true;
     }
     if (!existsSync(windsurfWaitDir)) {
       mkdirSync(windsurfWaitDir, { recursive: true });
-      cpSync(join(pluginRoot, "skills", "patchcord-wait", "SKILL.md"), join(windsurfWaitDir, "SKILL.md"));
+      cpSync(join(pluginRoot, "skills", "wait", "SKILL.md"), join(windsurfWaitDir, "SKILL.md"));
       windsurfChanged = true;
     }
     if (windsurfChanged) globalChanges.push("Windsurf skills installed");
@@ -210,18 +222,18 @@ if (!cmd || cmd === "install" || cmd === "agent" || cmd === "--token" || cmd ===
     let geminiChanged = false;
     if (!existsSync(geminiSkillDir)) {
       mkdirSync(geminiSkillDir, { recursive: true });
-      cpSync(join(pluginRoot, "skills", "patchcord", "SKILL.md"), join(geminiSkillDir, "SKILL.md"));
+      cpSync(join(pluginRoot, "skills", "inbox", "SKILL.md"), join(geminiSkillDir, "SKILL.md"));
       geminiChanged = true;
     }
     if (!existsSync(geminiWaitDir)) {
       mkdirSync(geminiWaitDir, { recursive: true });
-      cpSync(join(pluginRoot, "skills", "patchcord-wait", "SKILL.md"), join(geminiWaitDir, "SKILL.md"));
+      cpSync(join(pluginRoot, "skills", "wait", "SKILL.md"), join(geminiWaitDir, "SKILL.md"));
       geminiChanged = true;
     }
-    if (!existsSync(join(geminiCmdDir, "patchcord.toml"))) {
+    if (!existsSync(join(geminiCmdDir, "inbox.toml"))) {
       mkdirSync(geminiCmdDir, { recursive: true });
-      cpSync(join(pluginRoot, "commands", "patchcord.toml"), join(geminiCmdDir, "patchcord.toml"));
-      cpSync(join(pluginRoot, "commands", "patchcord-wait.toml"), join(geminiCmdDir, "patchcord-wait.toml"));
+      cpSync(join(pluginRoot, "commands", "inbox.toml"), join(geminiCmdDir, "inbox.toml"));
+      cpSync(join(pluginRoot, "commands", "wait.toml"), join(geminiCmdDir, "wait.toml"));
       geminiChanged = true;
     }
     if (geminiChanged) globalChanges.push("Gemini CLI skills + commands installed");
@@ -767,8 +779,8 @@ if (!cmd || cmd === "install" || cmd === "agent" || cmd === "--token" || cmd ===
     const agWaitDir = join(agDir, "skills", "patchcord-wait");
     mkdirSync(agSkillDir, { recursive: true });
     mkdirSync(agWaitDir, { recursive: true });
-    cpSync(join(pluginRoot, "skills", "patchcord", "SKILL.md"), join(agSkillDir, "SKILL.md"));
-    cpSync(join(pluginRoot, "skills", "patchcord-wait", "SKILL.md"), join(agWaitDir, "SKILL.md"));
+    cpSync(join(pluginRoot, "skills", "inbox", "SKILL.md"), join(agSkillDir, "SKILL.md"));
+    cpSync(join(pluginRoot, "skills", "wait", "SKILL.md"), join(agWaitDir, "SKILL.md"));
     console.log(`  ${green}✓${r} Skills installed: ${dim}patchcord${r}, ${dim}patchcord-wait${r}`);
     console.log(`  ${yellow}Global config — all Antigravity projects share this agent.${r}`);
   } else if (isCline) {
@@ -871,7 +883,7 @@ if (!cmd || cmd === "install" || cmd === "agent" || cmd === "--token" || cmd ===
     const waitDest = join(cwd, ".agents", "skills", "patchcord-wait");
     mkdirSync(waitDest, { recursive: true });
     writeFileSync(join(waitDest, "SKILL.md"),
-      readFileSync(join(pluginRoot, "skills", "patchcord-wait", "SKILL.md"), "utf-8"));
+      readFileSync(join(pluginRoot, "skills", "wait", "SKILL.md"), "utf-8"));
 
     const codexDir = join(cwd, ".codex");
     mkdirSync(codexDir, { recursive: true });
@@ -933,7 +945,7 @@ if (!cmd || cmd === "install" || cmd === "agent" || cmd === "--token" || cmd ===
     writeFileSync(join(pluginDir, "skills", "patchcord", "SKILL.md"),
       readFileSync(join(pluginRoot, "per-project-skills", "codex", "SKILL.md"), "utf-8"));
     writeFileSync(join(pluginDir, "skills", "patchcord-wait", "SKILL.md"),
-      readFileSync(join(pluginRoot, "skills", "patchcord-wait", "SKILL.md"), "utf-8"));
+      readFileSync(join(pluginRoot, "skills", "wait", "SKILL.md"), "utf-8"));
 
     // Personal marketplace entry (relative path from marketplace root)
     const marketplacePath = join(marketplaceDir, "marketplace.json");
@@ -959,7 +971,7 @@ if (!cmd || cmd === "install" || cmd === "agent" || cmd === "--token" || cmd ===
     const globalWaitDir = join(homedir(), ".agents", "skills", "patchcord-wait");
     mkdirSync(globalWaitDir, { recursive: true });
     writeFileSync(join(globalWaitDir, "SKILL.md"),
-      readFileSync(join(pluginRoot, "skills", "patchcord-wait", "SKILL.md"), "utf-8"));
+      readFileSync(join(pluginRoot, "skills", "wait", "SKILL.md"), "utf-8"));
 
     console.log(`\n  ${green}✓${r} Codex configured: ${dim}${configPath}${r}`);
     console.log(`  ${green}✓${r} Plugin installed: ${dim}@patchcord${r}, ${dim}@patchcord-wait${r}`);
@@ -993,14 +1005,71 @@ if (!cmd || cmd === "install" || cmd === "agent" || cmd === "--token" || cmd ===
     }
     console.log(`\n  ${green}✓${r} Claude Code configured: ${dim}${mcpPath}${r}`);
 
-    // Enable patchcord statusline (agent identity + inbox count in status bar)
-    try {
-      const enableScript = join(pluginRoot, "scripts", "enable-statusline.sh");
-      if (existsSync(enableScript)) {
-        execSync(`bash "${enableScript}" --full`, { stdio: "ignore" });
-        console.log(`  ${green}✓${r} Statusline enabled`);
+    // Statusline: ask whether to enable full mode (unless --full flag passed or already configured).
+    const enableScript = join(pluginRoot, "scripts", "enable-statusline.sh");
+    if (existsSync(enableScript)) {
+      let currentStatusLine = "";
+      const claudeSettingsPath = join(HOME, ".claude", "settings.json");
+      if (existsSync(claudeSettingsPath)) {
+        try {
+          const s = JSON.parse(readFileSync(claudeSettingsPath, "utf-8"));
+          currentStatusLine = s?.statusLine?.command || "";
+        } catch {}
       }
-    } catch {}
+      const hasPatchcordStatusLine = currentStatusLine.includes("patchcord");
+
+      let installFull = null; // true = install, null = skip
+      if (fullStatusline) {
+        installFull = true; // already handled in global setup, but re-run is idempotent
+      } else if (!hasPatchcordStatusLine) {
+        // Build preview with user's real values
+        const dirName = basename(cwd) || "project";
+        let branchPart = "";
+        const gitBranch = run(`git -C "${cwd}" symbolic-ref --short HEAD 2>/dev/null`);
+        if (gitBranch) {
+          const dirty = run(`git -C "${cwd}" status --porcelain 2>/dev/null`);
+          const star = dirty ? `${red}*${green}` : "";
+          branchPart = ` ${green}(${gitBranch}${star})${r}`;
+        }
+        const idStr = identity || "your-agent@namespace";
+        const idParts = idStr.split("@");
+        const idPart = idParts.length === 2
+          ? `${white}${idParts[0]}${r}${dim}@${idParts[1]}${r}`
+          : `${white}${idStr}${r}`;
+        const machinePart = hostname ? ` ${dim}(${hostname})${r}` : "";
+        const sep = `${dim} │ ${r}`;
+        const blue = "\x1b[38;2;0;153;255m";
+        const example = `${blue}Claude Opus 4.7${r}${sep}${green}0%${r}${sep}${cyan}${dirName}${r}${branchPart}${sep}${idPart}${machinePart}`;
+
+        console.log(``);
+        console.log(`  Patchcord can show live agent identity + context in Claude Code's status bar.`);
+        console.log(``);
+        console.log(`  Full mode: ${example}`);
+        console.log(``);
+
+        const defaultYes = !wasPluginInstalled;
+        const promptStr = defaultYes
+          ? `  ${bold}Install full status bar?${r} ${dim}(Y/n):${r} `
+          : `  ${bold}Install full status bar?${r} ${dim}(y/N):${r} `;
+        const { createInterface: createRLS } = await import("readline");
+        const rlS = createRLS({ input: process.stdin, output: process.stdout });
+        const answer = await new Promise((resolve) => rlS.question(promptStr, resolve));
+        rlS.close();
+        const a = (answer || "").trim().toLowerCase();
+        const yes = defaultYes
+          ? !(a === "n" || a === "no")
+          : (a === "y" || a === "yes");
+        if (yes) installFull = true;
+      }
+      // else: existing patchcord statusline — leave it alone
+
+      if (installFull === true) {
+        try {
+          execSync(`bash "${enableScript}" --full`, { stdio: "ignore" });
+          console.log(`  ${green}✓${r} Statusline enabled`);
+        } catch {}
+      }
+    }
   }
 
   // Warn about gitignore for per-project configs with tokens

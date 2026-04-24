@@ -1,5 +1,5 @@
 ---
-name: patchcord-wait
+name: patchcord:wait
 description: >
   Enter listening mode - wait for incoming patchcord messages. Use when user
   says "wait", "listen", "stand by", or wants the agent to stay responsive

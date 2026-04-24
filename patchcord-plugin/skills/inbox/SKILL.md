@@ -1,5 +1,5 @@
 ---
-name: patchcord
+name: patchcord:inbox
 description: >
   Cross-agent messaging across MCP-connected agents. Use when user mentions
   other agents, patchcord, check inbox, send message, who's online, agent

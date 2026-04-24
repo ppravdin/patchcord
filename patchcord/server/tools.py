@@ -95,8 +95,8 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
     """Register all MCP tools on the given FastMCP server instance."""
 
     @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=True))
-    async def send_message(to_agent: str, content: str, ctx: Context) -> str:
-        """Send a message to an agent. Use commas for multiple recipients. Messages support up to 50,000 characters — send full content, specifications, and code as-is. Never summarize or truncate when sending."""
+    async def send_message(to_agent: str, content: str, thread: str = "", ctx: Context | None = None) -> str:
+        """Send a message to an agent. Use commas for multiple recipients. Messages support up to 50,000 characters — send full content, specifications, and code as-is. Never summarize or truncate when sending. `thread` (optional slug) groups related messages as a named thread: send_message(to_agent="frontend", content="...", thread="auth-migration"). reply() auto-inherits the thread."""
         try:
             namespace_id, agent_id_val = _get_current_identity(ctx)
         except Exception:
@@ -173,6 +173,8 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
                 }
             )
 
+        thread_slug = clean(thread) if thread else ""
+
         # Single recipient — original path (no group_id, backward compatible)
         if len(recipients) == 1:
             return await _send_single(
@@ -182,6 +184,7 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
                 content,
                 is_oauth,
                 ctx,
+                thread_slug=thread_slug,
             )
 
         # Multi-recipient — fan-out with shared group_id
@@ -235,13 +238,44 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
         }
         return format_send(payload)
 
+    async def _resolve_thread_id(
+        namespace_id: str,
+        agent_id_val: str,
+        to_agent_resolved: str,
+        slug: str,
+    ) -> str | None:
+        """Given a thread slug, find existing thread_id or signal to create a new one.
+
+        Returns None if slug is empty, "__new__" if a new thread root should be created,
+        or the existing thread_id UUID to reuse.
+        """
+        if not slug:
+            return None
+        try:
+            rows = await _get_messages(
+                {
+                    "namespace_id": f"eq.{namespace_id}",
+                    "thread_title": f"eq.{slug}",
+                    "or": f"(and(from_agent.eq.{agent_id_val},to_agent.eq.{to_agent_resolved}),and(from_agent.eq.{to_agent_resolved},to_agent.eq.{agent_id_val}))",
+                    "select": "id,thread_id",
+                    "limit": "1",
+                    "order": "created_at.asc",
+                },
+            )
+            if rows:
+                return rows[0].get("thread_id") or rows[0]["id"]
+        except Exception:
+            pass
+        return "__new__"
+
     async def _send_single(
         namespace_id: str,
         agent_id_val: str,
         to_agent: str,
         content: str,
         is_oauth: bool,
-        ctx: Context,
+        ctx: Context | None,
+        thread_slug: str = "",
     ) -> str:
         """Send a single message (original path, no group_id)."""
         try:
@@ -277,6 +311,21 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
         is_self_send = to_agent_resolved == agent_id_val and target_ns == namespace_id
         msg_status = STATUS_DEFERRED if is_self_send else STATUS_PENDING
 
+        # Thread resolution
+        thread_fields: dict[str, Any] = {}
+        pending_thread_slug: str | None = None
+        if thread_slug:
+            thread_result = await _resolve_thread_id(target_ns, agent_id_val, to_agent_resolved, thread_slug)
+            if thread_result == "__new__":
+                pending_thread_slug = thread_slug
+            elif thread_result:
+                thread_fields["thread_id"] = thread_result
+                # Reopen resolved thread when a new message arrives
+                try:
+                    await _patch_message(thread_result, {"thread_resolved_at": None})
+                except Exception:
+                    pass
+
         try:
             result = await _post_message(
                 {
@@ -285,12 +334,27 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
                     "to_agent": to_agent_resolved,
                     "content": content,
                     "status": msg_status,
+                    **thread_fields,
                 }
             )
         except Exception as exc:
             return err("Failed to send message", detail=http_error(exc))
 
+        # New thread root: self-reference thread_id and set title
+        if pending_thread_slug and result.get("id"):
+            try:
+                await _patch_message(
+                    result["id"],
+                    {
+                        "thread_id": result["id"],
+                        "thread_title": pending_thread_slug,
+                    },
+                )
+            except Exception:
+                pass
+
         message_id = result.get("id", "unknown")
+        effective_thread_id = thread_fields.get("thread_id") or (message_id if pending_thread_slug else None)
         payload: dict[str, Any] = {
             "status": "sent",
             "message_id": message_id,
@@ -300,6 +364,9 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
             "to_tag": agent_tag(target_ns, to_agent_resolved),
             "tip": "Use wait_for_message() to block until the other agent responds.",
         }
+        if thread_slug:
+            payload["thread"] = thread_slug
+            payload["thread_id"] = effective_thread_id
         if target_ns != namespace_id:
             payload["cross_namespace"] = True
             payload["target_namespace"] = target_ns
@@ -319,8 +386,10 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
         return format_send(payload)
 
     @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=True))
-    async def reply(message_id: str, content: str, defer: bool = False, ctx: Context | None = None) -> str:
-        """Reply to a message in your inbox. Set defer=true when you receive a request but are busy with another task — the message stays visible in your inbox so you don't forget to handle it later. Deferred messages persist across sessions and appear in every future inbox() call until you reply again without defer."""
+    async def reply(
+        message_id: str, content: str = "", defer: bool = False, resolve: bool = False, ctx: Context | None = None
+    ) -> str:
+        """Reply to a message in your inbox. Automatically stays in the thread of the message you're replying to. Set defer=true to keep the message in your inbox for later. Set resolve=true to close the thread when the task is done."""
         if ctx is None:
             return err("Context missing")
         try:
@@ -336,13 +405,19 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
             return err("message_id is required")
         if not valid_uuid(message_id):
             return err("invalid message_id format")
-        if not content:
+        if not content and not defer and not resolve:
             return err("content is required")
         if len(content) > MAX_CONTENT_LENGTH:
             return err(f"content exceeds {MAX_CONTENT_LENGTH} characters")
 
         try:
-            originals = await _get_messages({"id": f"eq.{message_id}", "limit": "1"})
+            originals = await _get_messages(
+                {
+                    "id": f"eq.{message_id}",
+                    "limit": "1",
+                    "select": "id,from_agent,to_agent,namespace_id,status,thread_id,thread_title,thread_resolved_at",
+                }
+            )
         except Exception as exc:
             return err("Failed to load original message", detail=http_error(exc))
         if not originals:
@@ -367,11 +442,41 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
         # Store reply in the original message's namespace (keeps reply chain together)
         reply_ns = orig_ns
 
+        # Thread inheritance: carry forward thread_id from the message being replied to
+        orig_thread_id = original.get("thread_id")
+        orig_thread_title = original.get("thread_title")
+        reply_thread_fields: dict[str, Any] = {}
+        if orig_thread_id:
+            reply_thread_fields["thread_id"] = orig_thread_id
+
         # defer=true: mark as deferred (persists in inbox); defer=false: mark as replied (resolved)
         new_status = STATUS_DEFERRED if defer else STATUS_REPLIED
 
         try:
-            await _patch_message(message_id, {"status": new_status})
+            status_patch: dict[str, Any] = {"status": new_status}
+            if resolve:
+                from patchcord.core import now_iso
+
+                resolve_root = orig_thread_id or message_id
+                try:
+                    await _patch_message(resolve_root, {"thread_resolved_at": now_iso()})
+                    _log.info("RESOLVE stamped thread_resolved_at on root=%s", resolve_root)
+                except Exception as exc:
+                    _log.warning("RESOLVE failed to stamp root=%s: %s", resolve_root, exc)
+            await _patch_message(message_id, status_patch)
+
+            if not content:
+                return format_reply(
+                    {
+                        "status": new_status,
+                        "to": original["from_agent"],
+                        "deferred": defer,
+                        "resolved": resolve,
+                        "thread_id": orig_thread_id,
+                        "thread": orig_thread_title,
+                    }
+                )
+
             result = await _post_message(
                 {
                     "namespace_id": reply_ns,
@@ -380,6 +485,7 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
                     "content": content,
                     "reply_to": message_id,
                     "status": STATUS_PENDING,
+                    **reply_thread_fields,
                 }
             )
         except Exception as exc:
@@ -391,6 +497,9 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
                 "reply_id": result.get("id"),
                 "to": original["from_agent"],
                 "deferred": defer,
+                "resolved": resolve,
+                "thread_id": orig_thread_id,
+                "thread": orig_thread_title,
             }
         )
 
@@ -870,7 +979,7 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
         all_agents: bool = False,
         ctx: Context | None = None,
     ) -> str:
-        """Get all unread messages and see who's available. Call this first when you connect. Set all_agents=true to include offline agents. Offline agents can still receive messages — ask the human to check their inbox."""
+        """Get all unread messages and see who's available. Call this first when you connect. Set all_agents=true to include offline agents. Messages are returned both as a flat `pending` list and as `groups` (bucketed by thread). Offline agents can still receive messages — ask the human to check their inbox."""
         if ctx is None:
             return err("Context missing")
 
@@ -927,7 +1036,7 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
                         _log.debug("failed to mark message as read", exc_info=True)
 
             def _msg_entry(message):
-                return {
+                entry: dict[str, Any] = {
                     "message_id": message["id"],
                     "from": message["from_agent"],
                     "from_tag": agent_tag(
@@ -937,10 +1046,35 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
                     "content": message["content"],
                     "sent_at": message["created_at"],
                 }
+                if message.get("thread_id"):
+                    entry["thread_id"] = message["thread_id"]
+                    entry["thread"] = message.get("thread_title")
+                    if message.get("thread_resolved_at"):
+                        entry["thread_resolved_at"] = message["thread_resolved_at"]
+                return entry
+
+            # Build groups: one group per thread (null thread_id = no thread)
+            groups: list[dict[str, Any]] = []
+            _seen_thread_ids: dict[str | None, int] = {}
+            for m in pending:
+                tid = m.get("thread_id") or None
+                title = m.get("thread_title") or None
+                if tid not in _seen_thread_ids:
+                    _seen_thread_ids[tid] = len(groups)
+                    groups.append(
+                        {
+                            "thread_id": tid,
+                            "thread_title": title,
+                            "thread_resolved_at": m.get("thread_resolved_at") or None,
+                            "messages": [],
+                        }
+                    )
+                groups[_seen_thread_ids[tid]]["messages"].append(_msg_entry(m))
 
             result_data["inbox"] = {
                 "pending_count": len(pending),
                 STATUS_PENDING: [_msg_entry(m) for m in pending],
+                "groups": groups,
                 "deferred_count": len(deferred),
                 STATUS_DEFERRED: [_msg_entry(m) for m in deferred],
             }
@@ -1063,8 +1197,8 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
         return format_inbox(result_data)
 
     @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False))
-    async def recall(limit: int = 10, from_agent: str = "", ctx: Context | None = None) -> str:
-        """View recent message history, including messages already read."""
+    async def recall(limit: int = 10, from_agent: str = "", thread_id: str = "", ctx: Context | None = None) -> str:
+        """View recent message history, including messages already read. Pass thread_id to filter to a specific thread."""
         if ctx is None:
             return err("Context missing")
 
@@ -1077,25 +1211,34 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
 
         limit = max(1, min(100, limit))
         from_agent_clean = clean(from_agent)
+        thread_id_clean = clean(thread_id)
+        if thread_id_clean and not valid_uuid(thread_id_clean):
+            return err("invalid thread_id format")
 
         # Scoped to user's namespaces
         user_ns = await _scoped_namespace_ids(namespace_id, ctx)
         ns_flt = user_ns_filter(user_ns)
+        sel = "id,from_agent,to_agent,content,status,created_at,thread_id,thread_title,thread_resolved_at"
         sent_params: dict[str, str] = {
             "from_agent": f"eq.{agent_id_val}",
             "order": "created_at.desc",
             "limit": str(limit),
+            "select": sel,
             "namespace_id": ns_flt,
         }
         recv_params: dict[str, str] = {
             "to_agent": f"eq.{agent_id_val}",
             "order": "created_at.desc",
             "limit": str(limit),
+            "select": sel,
             "namespace_id": ns_flt,
         }
         if from_agent_clean:
             sent_params["to_agent"] = f"eq.{from_agent_clean}"
             recv_params["from_agent"] = f"eq.{from_agent_clean}"
+        if thread_id_clean:
+            sent_params["thread_id"] = f"eq.{thread_id_clean}"
+            recv_params["thread_id"] = f"eq.{thread_id_clean}"
 
         try:
             sent = await _get_messages(sent_params)
@@ -1108,19 +1251,21 @@ def register(mcp):  # noqa: C901 — registering all tools in one function
             deduped[m["id"]] = m
         recent = sorted(deduped.values(), key=lambda x: x["created_at"], reverse=True)[:limit]
 
+        def _recall_entry(row: dict) -> dict:
+            entry: dict[str, Any] = {
+                "id": row["id"],
+                "direction": "sent" if row["from_agent"] == agent_id_val else "received",
+                "other_agent": row["to_agent"] if row["from_agent"] == agent_id_val else row["from_agent"],
+                "content": row["content"][:200],
+                "status": row["status"],
+                "time": row["created_at"],
+            }
+            if row.get("thread_id"):
+                entry["thread_id"] = row["thread_id"]
+                entry["thread"] = row.get("thread_title")
+            return entry
+
         return format_recall_history(
-            {
-                "messages": [
-                    {
-                        "id": row["id"],
-                        "direction": "sent" if row["from_agent"] == agent_id_val else "received",
-                        "other_agent": row["to_agent"] if row["from_agent"] == agent_id_val else row["from_agent"],
-                        "content": row["content"][:200],
-                        "status": row["status"],
-                        "time": row["created_at"],
-                    }
-                    for row in recent
-                ],
-            },
+            {"messages": [_recall_entry(row) for row in recent]},
             agent_id_val,
         )

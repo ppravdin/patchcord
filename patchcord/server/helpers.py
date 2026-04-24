@@ -811,13 +811,20 @@ async def _resolve_target_agent(
     # Get all namespaces owned by this user
     user_ns = await get_user_namespace_ids(sender_namespace)
 
-    # Parse agent@namespace syntax — allowed for any agent type within user's namespaces
+    # Parse agent@namespace syntax
     if "@" in to_agent_raw:
         agent_id, target_ns = to_agent_raw.rsplit("@", 1)
         agent_id = agent_id.strip()
         target_ns = target_ns.strip()
         if not agent_id or not target_ns:
             raise ValueError("Invalid agent@namespace format")
+        # Bearer tokens are strictly scoped to their own namespace
+        if not is_oauth:
+            if target_ns != sender_namespace:
+                raise ValueError(
+                    f"Cannot send to namespace {target_ns!r} — bearer tokens are scoped to {sender_namespace!r}"
+                )
+            return target_ns, agent_id
         if not namespace_ids_match(target_ns, user_ns):
             raise ValueError(f"Namespace {target_ns!r} not found")
         return target_ns, agent_id
@@ -837,8 +844,8 @@ async def _resolve_target_agent(
         except Exception:
             _log.debug("registry lookup failed for agent resolution", exc_info=True)
 
-    # Search across all of the user's namespaces (OAuth or bearer with multi-ns user)
-    if len(user_ns) > 1 and not is_registry_disabled():
+    # Cross-namespace search — ONLY for OAuth agents, never bearer tokens.
+    if is_oauth and len(user_ns) > 1 and not is_registry_disabled():
         try:
             rows = await _get_registry(
                 {

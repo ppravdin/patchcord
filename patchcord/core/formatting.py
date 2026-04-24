@@ -83,7 +83,10 @@ def format_inbox(data: dict[str, Any]) -> str:
             for a in online:
                 aid = a.get("agent_id", "?")
                 ns = a.get("namespace_id", "")
-                if multi_ns and ns:
+                fid = a.get("full_id", "")
+                if fid.startswith("global:"):
+                    names.append(aid)
+                elif multi_ns and ns:
                     names.append(f"{aid}@{ns}")
                 else:
                     names.append(aid)
