@@ -54,7 +54,11 @@ pc_part=""
 if [ -n "$pc_url" ] && [ -n "$pc_token" ]; then
     cache_key=$(printf '%s\n%s\n' "$mcp_json" "$pc_url" | sha256sum | awk '{print $1}')
     cache_file="/tmp/claude/patchcord-statusline-${cache_key}.json"
-    cache_max_age=20
+    # Identity (agent, namespace, machine) never changes without .mcp.json
+    # rotating. Inbox count drifts in 5 min but subscribe.mjs surfaces real
+    # arrivals immediately via Monitor, so the count here is just decorative.
+    # 5 min TTL → ~12 calls/hour instead of ~180.
+    cache_max_age=300
     mkdir -p /tmp/claude
 
     needs_refresh=true
