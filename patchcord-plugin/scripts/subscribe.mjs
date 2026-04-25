@@ -102,6 +102,27 @@ async function fetchTicket(baseUrl, token) {
   }
 }
 
+// Check if there are messages already pending in the inbox at the moment
+// we connect (or reconnect). Realtime only delivers FUTURE INSERTs, so
+// anything queued before we joined is invisible until the agent calls
+// inbox() manually. Emit a stdout line when there's a pending queue so
+// Monitor wakes the agent the same way a real arrival does.
+async function drainQueueOnce(baseUrl, token) {
+  const res = await httpJson(`${baseUrl}/api/inbox?count_only=1&limit=100`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (res.status !== 200) {
+    throw new Error(`inbox HTTP ${res.status}`);
+  }
+  let count = 0;
+  try {
+    count = JSON.parse(res.body).pending_count ?? 0;
+  } catch (_) {}
+  if (count > 0) {
+    process.stdout.write(`PATCHCORD: ${count} waiting in inbox\n`);
+  }
+}
+
 function writePidfile(path) {
   try {
     writeFileSync(path, String(process.pid), { flag: "wx" });
@@ -233,6 +254,16 @@ function runOnce(ticket, baseUrl, token, refreshTicket) {
           })
         );
       }
+
+      // Drain any messages already in the queue when we connected.
+      // Realtime only delivers FUTURE INSERTs — anything pending before
+      // we joined (or that arrived during a reconnect gap) wouldn't
+      // otherwise wake the agent. Fire-and-forget: a transient HTTP
+      // failure here just means we miss queued messages this round;
+      // the next reconnect retries.
+      drainQueueOnce(baseUrl, token).catch((e) => {
+        process.stderr.write(`subscribe: queue check failed: ${e.message}\n`);
+      });
       heartbeatTimer = setInterval(() => {
         try {
           ws.send(
