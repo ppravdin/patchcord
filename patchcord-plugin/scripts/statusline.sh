@@ -70,7 +70,7 @@ if [ -n "$pc_url" ] && [ -n "$pc_token" ]; then
     fi
 
     if $needs_refresh; then
-        http_code=$(curl -s -o /tmp/claude/patchcord-sl-resp.json -w "%{http_code}" --max-time 3 \
+        http_code=$(curl -s -o /tmp/claude/patchcord-sl-resp.json -w "%{http_code}" --max-time 5 \
             -H "Authorization: Bearer $pc_token" \
             "${pc_url}/api/inbox?status=pending&limit=50" 2>/dev/null || echo "000")
         if [ "$http_code" = "401" ] || [ "$http_code" = "403" ]; then
@@ -79,6 +79,14 @@ if [ -n "$pc_url" ] && [ -n "$pc_token" ]; then
         elif [ "$http_code" = "200" ]; then
             pc_data=$(cat /tmp/claude/patchcord-sl-resp.json 2>/dev/null)
             [ -n "$pc_data" ] && echo "$pc_data" > "$cache_file"
+            # Touch cache mtime even on success so the next miss starts fresh
+        else
+            # Refresh failed (timeout, 5xx, network blip). Fall back to the
+            # cached response if we have one, even if it's older than
+            # cache_max_age — better to show stale identity than nothing.
+            if [ -z "$pc_data" ] && [ -f "$cache_file" ]; then
+                pc_data=$(cat "$cache_file" 2>/dev/null)
+            fi
         fi
         rm -f /tmp/claude/patchcord-sl-resp.json
     fi
