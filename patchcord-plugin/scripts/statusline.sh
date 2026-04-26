@@ -74,8 +74,10 @@ if [ -n "$pc_url" ] && [ -n "$pc_token" ]; then
     fi
 
     if $needs_refresh; then
+        install_path=$(dirname "$mcp_json")
         http_code=$(curl -s -o /tmp/claude/patchcord-sl-resp.json -w "%{http_code}" --max-time 5 \
             -H "Authorization: Bearer $pc_token" \
+            -H "x-patchcord-install-path: ${install_path}" \
             "${pc_url}/api/inbox?status=pending&limit=50" 2>/dev/null || echo "000")
         if [ "$http_code" = "401" ] || [ "$http_code" = "403" ]; then
             pc_data='{"_auth_error":true}'

@@ -81,7 +81,10 @@ function httpJson(urlStr, { method = "GET", headers = {}, body = null } = {}) {
 
 async function fetchTicket(baseUrl, token) {
   const res = await httpJson(`${baseUrl}/api/realtime/ticket`, {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "x-patchcord-install-path": process.cwd(),
+    },
   });
   if (res.status === 401 || res.status === 403) {
     die(`ticket: token rejected (HTTP ${res.status}) — check .mcp.json`);
@@ -109,7 +112,10 @@ async function fetchTicket(baseUrl, token) {
 // Monitor wakes the agent the same way a real arrival does.
 async function drainQueueOnce(baseUrl, token) {
   const res = await httpJson(`${baseUrl}/api/inbox?count_only=1&limit=100`, {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "x-patchcord-install-path": process.cwd(),
+    },
   });
   if (res.status !== 200) {
     throw new Error(`inbox HTTP ${res.status}`);
