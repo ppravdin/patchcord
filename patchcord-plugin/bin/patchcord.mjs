@@ -570,6 +570,26 @@ if (!cmd || cmd === "install" || cmd === "agent" || cmd === "--token" || cmd ===
   } // end connect flow
   } // end if (!token)
 
+  // Tell the server where this agent is installed on disk.
+  // Universal: works for every client (Claude Code, Codex, Cursor, Gemini,
+  // Windsurf, etc.) because the installer runs once per install regardless
+  // of which tool is being wired up. Re-running on existing setups also
+  // fires this, which is how we backfill install_path for users who
+  // installed before the column existed.
+  // Best-effort: a network failure here doesn't block the install.
+  if (token) {
+    const pathPayload = JSON.stringify({ install_path: cwd });
+    // Single quotes in the payload could break shell escaping; encode them.
+    const safePayload = pathPayload.replace(/'/g, `'\\''`);
+    run(
+      `curl -sf -X POST --max-time 5 ` +
+      `-H "Authorization: Bearer ${token}" ` +
+      `-H "Content-Type: application/json" ` +
+      `-d '${safePayload}' ` +
+      `"${serverUrl}/api/agent/install-path" >/dev/null 2>&1 || true`
+    );
+  }
+
   const isCodex = choice === "2";
   const isCursor = choice === "3";
   const isWindsurf = choice === "4";
