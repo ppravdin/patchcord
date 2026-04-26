@@ -122,10 +122,45 @@ if (!cmd || cmd === "install" || cmd === "agent" || cmd === "--token" || cmd ===
       try { rmSync(npmCachePatchcord, { recursive: true, force: true }); } catch {}
     }
 
+    // Stable plugin location: copy plugin files out of the bunx/npx temp
+    // dir into a path under HOME that won't get reused across npx
+    // invocations. Without this, `claude plugin marketplace add` points at
+    // /tmp/bunx-1000-patchcord@latest/... which bunx aggressively caches
+    // and may not re-download for "@latest" — so the marketplace can stay
+    // pinned to a stale tarball, and `claude plugin update` resolves the
+    // wrong (sometimes very old) version.
+    let marketplaceSource = pluginRoot;
+    try {
+      const stableDir = join(HOME, ".patchcord", "plugin");
+      if (existsSync(stableDir)) {
+        rmSync(stableDir, { recursive: true, force: true });
+      }
+      mkdirSync(stableDir, { recursive: true });
+      cpSync(pluginRoot, stableDir, { recursive: true });
+      marketplaceSource = stableDir;
+
+      // Some Claude Code versions silently keep the existing source path
+      // on re-add for a marketplace name that's already registered. Wipe
+      // any old patchcord-marketplace entry so the next `marketplace add`
+      // is forced to write the new stable path.
+      const kmpPath = join(HOME, ".claude", "plugins", "known_marketplaces.json");
+      if (existsSync(kmpPath)) {
+        try {
+          const kmp = JSON.parse(readFileSync(kmpPath, "utf-8"));
+          if (kmp["patchcord-marketplace"]) {
+            delete kmp["patchcord-marketplace"];
+            writeFileSync(kmpPath, JSON.stringify(kmp, null, 2) + "\n");
+          }
+        } catch {}
+      }
+    } catch (e) {
+      globalChanges.push(`✗ Stable plugin path setup failed (${e.message}), falling back to bunx temp dir`);
+    }
+
     // Always re-add marketplace (copies fresh files from this npx package)
     // and install/update plugin. Claude Code's built-in plugin update
     // doesn't detect new versions from local sources (#37252).
-    run(`claude plugin marketplace add "${pluginRoot}"`);
+    run(`claude plugin marketplace add "${marketplaceSource}"`);
     const installed = run(`claude plugin list`)?.includes("patchcord");
     wasPluginInstalled = !!installed;
     if (installed) {
