@@ -366,12 +366,23 @@ if (!cmd || cmd === "install" || cmd === "agent" || cmd?.startsWith("--")) {
     }
     rl.close();
   } else {
-    // Check if patchcord is already configured — offer to update URL without re-auth
+    // Check if patchcord is already configured — offer to update URL without re-auth.
+    // When --tool=<slug> is set, we ONLY look at the config file that <slug>
+    // would itself write to. Other tools' existing configs in the same project
+    // are not a "we already have patchcord here" signal — the user is explicit
+    // about which tool they're setting up, the question "Add another agent?"
+    // makes no sense across tool boundaries (claude_code already configured
+    // doesn't change anything about installing codex).
     let existingToken = "";
     let existingConfigFile = "";
     const mcpJsonPath = join(cwd, ".mcp.json");
     const codexTomlPath = join(cwd, ".codex", "config.toml");
-    if (existsSync(mcpJsonPath)) {
+
+    const slugForCheck = toolSlug ? toolSlug.replace(/-/g, "_") : "";
+    const checkMcpJson = !slugForCheck || slugForCheck === "claude_code";
+    const checkCodexToml = !slugForCheck || slugForCheck === "codex";
+
+    if (checkMcpJson && existsSync(mcpJsonPath)) {
       try {
         const existing = JSON.parse(readFileSync(mcpJsonPath, "utf-8"));
         const pt = existing?.mcpServers?.patchcord;
@@ -381,7 +392,7 @@ if (!cmd || cmd === "install" || cmd === "agent" || cmd?.startsWith("--")) {
         }
       } catch {}
     }
-    if (!existingToken && existsSync(codexTomlPath)) {
+    if (!existingToken && checkCodexToml && existsSync(codexTomlPath)) {
       try {
         const content = readFileSync(codexTomlPath, "utf-8");
         const match = content.match(/Bearer\s+([^\s"]+)/);
