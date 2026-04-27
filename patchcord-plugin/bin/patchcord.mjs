@@ -300,23 +300,45 @@ if (!cmd || cmd === "install" || cmd === "agent" || cmd === "--token" || cmd ===
     apiUrl = serverUrl;
   }
 
+  // --tool=<slug> — pre-select client type. The dashboard's
+  // /console/connect/<platform> tile pages emit `--tool=<slug>` in the
+  // displayed npx command so the user picks the agent type ONCE on the
+  // web UI; the installer skips its terminal picker, and the
+  // `&tool=<slug>` query param appended to the browser connectUrl below
+  // makes the web /connect page skip its picker too.
+  // Unknown slugs (incl. `replit`, `unknown`) silently fall through —
+  // the existing interactive flow takes over.
+  const toolFlag = flags.find(f => f.startsWith("--tool="))?.split("=")[1]
+    || (flags.includes("--tool") ? flags[flags.indexOf("--tool") + 1] : "");
+  let toolSlug = "";
+  if (toolFlag) {
+    const normalized = toolFlag.replace(/-/g, "_");
+    if (CLIENT_TYPE_MAP[normalized]) {
+      choice = CLIENT_TYPE_MAP[normalized];
+    }
+    toolSlug = toolFlag;  // preserved as-is for the URL param
+  }
+
   // --token bypass for power users / CI / self-hosters
   const tokenFlag = flags.find(f => f.startsWith("--token="))?.split("=")[1]
     || (flags.includes("--token") ? flags[flags.indexOf("--token") + 1] : "");
 
   if (tokenFlag) {
-    // --token bypass: need tool picker in terminal
-    console.log(`\n${bold}Which tool are you setting up?${r}\n`);
-    console.log(`  ${cyan}1.${r} Claude Code   ${cyan}5.${r} Gemini CLI`);
-    console.log(`  ${cyan}2.${r} Codex CLI     ${cyan}6.${r} VS Code`);
-    console.log(`  ${cyan}3.${r} Cursor        ${cyan}7.${r} Zed`);
-    console.log(`  ${cyan}4.${r} Windsurf      ${cyan}8.${r} OpenCode`);
-    console.log(`  ${cyan}11.${r} Cline         ${cyan}9.${r} OpenClaw\n`);
-    choice = (await ask(`${dim}Choose (1-9, 11):${r} `)).trim();
-    if (!["1","2","3","4","5","6","7","8","9","11"].includes(choice)) {
-      console.error("Invalid choice.");
-      rl.close();
-      process.exit(1);
+    // --token bypass: need tool picker in terminal — unless --tool=<slug>
+    // already pre-selected one for us.
+    if (!choice) {
+      console.log(`\n${bold}Which tool are you setting up?${r}\n`);
+      console.log(`  ${cyan}1.${r} Claude Code   ${cyan}5.${r} Gemini CLI`);
+      console.log(`  ${cyan}2.${r} Codex CLI     ${cyan}6.${r} VS Code`);
+      console.log(`  ${cyan}3.${r} Cursor        ${cyan}7.${r} Zed`);
+      console.log(`  ${cyan}4.${r} Windsurf      ${cyan}8.${r} OpenCode`);
+      console.log(`  ${cyan}11.${r} Cline         ${cyan}9.${r} OpenClaw\n`);
+      choice = (await ask(`${dim}Choose (1-9, 11):${r} `)).trim();
+      if (!["1","2","3","4","5","6","7","8","9","11"].includes(choice)) {
+        console.error("Invalid choice.");
+        rl.close();
+        process.exit(1);
+      }
     }
     token = tokenFlag.trim();
     if (!isSafeToken(token)) {
@@ -481,8 +503,12 @@ if (!cmd || cmd === "install" || cmd === "agent" || cmd === "--token" || cmd ===
         process.exit(1);
       }
     } else {
-      // Open browser or show URL
-      const connectUrl = `https://patchcord.dev/connect?session=${sessionId}`;
+      // Open browser or show URL.
+      // Append &tool=<slug> when --tool was passed so the web /connect
+      // page skips its type picker (the user already chose on the
+      // dashboard tile).
+      const toolParam = toolSlug ? `&tool=${encodeURIComponent(toolSlug)}` : "";
+      const connectUrl = `https://patchcord.dev/connect?session=${sessionId}${toolParam}`;
 
       if (canOpenBrowser()) {
         const opened = openBrowser(connectUrl);
