@@ -77,7 +77,11 @@ if (cmd === "plugin-path") {
 }
 
 // ── main flow: global setup + project setup (or just install/agent for back-compat) ──
-if (!cmd || cmd === "install" || cmd === "agent" || cmd === "--token" || cmd === "--no-browser" || cmd === "--server") {
+// Any --flag enters this branch so equals-form (--token=foo, --tool=foo, --server=foo)
+// works the same as the space-form (--token foo). The internal flag parsing below
+// supports both. Non-flag commands (channel, init, skill, help, plugin-path) have
+// their own branches above and below.
+if (!cmd || cmd === "install" || cmd === "agent" || cmd?.startsWith("--")) {
   const flags = cmd?.startsWith("--") ? process.argv.slice(2) : process.argv.slice(3);
   const fullStatusline = flags.includes("--full");
   let wasPluginInstalled = false;
