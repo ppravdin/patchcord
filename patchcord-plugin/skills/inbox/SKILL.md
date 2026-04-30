@@ -32,19 +32,30 @@ The user can undo any change in 3 seconds with git. A wrong action costs nothing
 
 ## On session start or when prompted by a hook
 
-Call inbox(). It returns pending messages and recently active agents.
+Call inbox(). It returns pending messages, recently active agents, and your own push-receiving state via `self_subscribed`. Note that value — it determines whether you should call `wait_for_message` after sends for the rest of the session.
+
+If `subscribe_appears_down: true` is in the response, your subscribe.mjs was running but appears dead. Tell the human: "Patchcord subscribe seems to have died — run `/patchcord:subscribe` to restart push delivery." Do not try to restart it yourself.
 
 If there are pending messages, reply to all of them immediately. Do not ask the human first. Do not explain what you plan to reply. Just do the work described in each message, then reply with what you did, then tell the human what you received and what you did about it.
 
 ## Sending
 
-1. inbox() - clear any pending messages that block outbound sends. Note who's online (determines whether to wait after sending, not whether to send).
+1. inbox() - clear any pending messages that block outbound sends. From the response, note `self_subscribed` (your own push-receiving state).
 2. send_message("agent_name", "specific question with file paths and context") - or "agent1, agent2" for multiple recipients. Use `@username` for cross-user Gate messaging. To start or join a named thread: `send_message("frontend", "content", thread="auth-migration")`.
-3. If recipient is online: wait_for_message() - block until response arrives. Use the default timeout (300s) - you get the message instantly when it arrives, not after the timeout. The other agent needs time to do the work and reply. Never shorten the timeout. If offline: skip the wait, tell the human the message is queued.
+3. Decide whether to wait based on **two signals** in the send response:
+   - `self_subscribed` (from the most recent inbox call) — are YOU push-receiving?
+   - `recipient_subscribed` (in the send response) — is the recipient push-receiving?
 
-Always send regardless of whether the recipient appears online or offline. Messages are stored and delivered when the recipient checks inbox. "Offline" means not recently active - not that they can't receive messages.
+   | self_subscribed | recipient_subscribed | What to do |
+   | --- | --- | --- |
+   | true | true | **Do NOT call wait_for_message.** Continue working. Their reply will arrive via your subscribe push and your Monitor will surface it. Tell the human: "Sent — [agent] will see it within seconds." |
+   | true | false | **Do NOT call wait_for_message.** Continue working. Tell the human: "Sent — [agent] isn't actively listening right now, may take a while to respond." |
+   | false | true | **Call wait_for_message** with default timeout. Recipient is live, expect a reply soon. |
+   | false | false | **Skip wait_for_message.** Tell the human: "Sent — [agent] isn't currently active. Ask them to check inbox in their session." |
 
-After sending to an offline agent, tell the human: "Message sent. [agent] is not currently active - ask them to run `/patchcord` in their session to pick it up."
+Always send regardless of recipient state. Messages are stored and delivered when the recipient checks inbox.
+
+If `recipient_subscribed` is missing from the response (older server, registry disabled), fall back to the legacy `recipient_online` field for the same decision.
 
 If send_message fails with a send gate error: call inbox(), reply to or resolve all pending messages, then retry the send.
 
@@ -57,7 +68,7 @@ If send_message fails with a send gate error: call inbox(), reply to or resolve 
    - `reply(message_id, "done: [details]", resolve=true)` — work done, thread closed. Stamps `thread_resolved_at` and notifies sender.
    - `reply(message_id, resolve=true)` — silently close a thread without sending anything (e.g. clearing misfired messages)
    - `reply(message_id, "ack, prioritizing [other task] first", defer=true)` — you acknowledged but haven't done the work yet. The message stays in your inbox as a reminder.
-4. wait_for_message() if the sender is online - stay responsive for follow-ups
+4. After replying, decide whether to stay listening using the same two-signal rule as for sends — `self_subscribed` × `recipient_subscribed` (in the reply response). If `self_subscribed` is true, return to your work; your Monitor will wake you when a follow-up arrives. If `self_subscribed` is false and `recipient_subscribed` is true, call `wait_for_message()` to stay responsive. Otherwise (both false), tell the human you've replied and continue with other work.
 5. If you can't do the work, say specifically what's blocking you. Don't guess about another agent's code.
 
 When you have multiple pending messages, prioritize by urgency. Use `defer=true` for tasks you'll do later — if you reply without doing the work and don't defer, the message vanishes from your inbox and you will never remember to do it.

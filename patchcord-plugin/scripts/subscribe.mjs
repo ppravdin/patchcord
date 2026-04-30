@@ -16,6 +16,12 @@ import { connect as wsConnect } from "./lib/ws.mjs";
 const JWT_REFRESH_SAFETY_MARGIN_SEC = 120;
 const HEARTBEAT_INTERVAL_MS = 25_000;
 const RECONNECT_BACKOFF_MS = [1000, 2000, 4000, 8000, 15_000, 30_000];
+// Freshness watchdog: if we haven't received ANY frame from the server
+// (heartbeat replies, postgres_changes, system events) for this long, the
+// WS is silently dead — phx replies should arrive every ~25s, so a 90s
+// gap means three missed heartbeats. Force a reconnect via the outer loop.
+const FRESHNESS_CHECK_INTERVAL_MS = 30_000;
+const FRESHNESS_STALE_MS = 90_000;
 
 // Guarantee a terminal stderr line on any unhandled failure so the agent
 // reading Monitor's output file always sees WHY the process died.
@@ -230,6 +236,8 @@ function runOnce(ticket, baseUrl, token, refreshTicket) {
     let ref = 1;
     let heartbeatTimer = null;
     let refreshTimer = null;
+    let freshnessTimer = null;
+    let lastEventAt = Date.now();
     let currentJwt = ticket.jwt;
     let settled = false;
 
@@ -238,6 +246,7 @@ function runOnce(ticket, baseUrl, token, refreshTicket) {
       settled = true;
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       if (refreshTimer) clearTimeout(refreshTimer);
+      if (freshnessTimer) clearInterval(freshnessTimer);
       try {
         ws.close();
       } catch (_) {}
@@ -282,6 +291,21 @@ function runOnce(ticket, baseUrl, token, refreshTicket) {
           );
         } catch (_) {}
       }, HEARTBEAT_INTERVAL_MS);
+
+      // Freshness watchdog. Phoenix replies to every heartbeat with a
+      // phx_reply frame; if those stop arriving (silent network drop,
+      // backgrounded socket after laptop sleep, server-side eviction
+      // without close frame), the WS appears open but is dead. Force a
+      // reconnect via the outer loop — done(err) increments backoffIdx.
+      freshnessTimer = setInterval(() => {
+        const stale = Date.now() - lastEventAt;
+        if (stale > FRESHNESS_STALE_MS) {
+          process.stderr.write(
+            `subscribe: ws stale ${Math.round(stale / 1000)}s, forcing reconnect\n`
+          );
+          done(new Error(`ws stale ${Math.round(stale / 1000)}s`));
+        }
+      }, FRESHNESS_CHECK_INTERVAL_MS);
 
       const scheduleRefresh = (ttlSec) => {
         const refreshIn = Math.max((ttlSec - JWT_REFRESH_SAFETY_MARGIN_SEC) * 1000, 30_000);
@@ -331,6 +355,10 @@ function runOnce(ticket, baseUrl, token, refreshTicket) {
     });
 
     ws.on("message", (raw) => {
+      // Any inbound frame counts as proof of life — phx_reply, system,
+      // presence_state, postgres_changes, etc. Reset BEFORE the parse
+      // attempt so even malformed frames count.
+      lastEventAt = Date.now();
       let frame;
       try {
         frame = JSON.parse(raw);
