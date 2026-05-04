@@ -97,6 +97,43 @@ if (!cmd || cmd === "install" || cmd === "agent" || cmd?.startsWith("--")) {
     } catch { return null; }
   }
 
+  // Read+merge+write a JSON config file. If the file exists but its contents
+  // can't be parsed, REFUSE to write — silently overwriting would erase
+  // unrelated MCP servers, settings, or hand-edits the user has in there.
+  // Returns true on success, false when skipped due to a parse failure (so
+  // the caller can suppress its "configured" message).
+  function updateJsonConfig(filePath, mutate) {
+    let parsed = {};
+    if (existsSync(filePath)) {
+      const raw = readFileSync(filePath, "utf-8");
+      try {
+        // JSONC-tolerant: Zed/Gemini settings allow //, /* */, trailing commas.
+        const cleaned = raw
+          .replace(/\/\/.*$/gm, "")
+          .replace(/\/\*[\s\S]*?\*\//g, "")
+          .replace(/,\s*([}\]])/g, "$1");
+        const result = cleaned.trim() ? JSON.parse(cleaned) : {};
+        // null / arrays / primitives aren't config objects we can merge into;
+        // refuse rather than blow them away.
+        if (result === null || typeof result !== "object" || Array.isArray(result)) {
+          console.log(`\n  ${yellow}⚠${r}  Skipped ${filePath} — existing file is not a JSON object.`);
+          console.log(`     Replace it with a valid object ({...}) or remove it, then re-run.`);
+          return false;
+        }
+        parsed = result;
+      } catch {
+        console.log(`\n  ${yellow}⚠${r}  Skipped ${filePath} — could not parse existing JSON.`);
+        console.log(`     Fix the file by hand and re-run the installer. We will not`);
+        console.log(`     overwrite it: that would erase your other servers/settings.`);
+        return false;
+      }
+    }
+    mutate(parsed);
+    mkdirSync(dirname(filePath), { recursive: true });
+    writeFileSync(filePath, JSON.stringify(parsed, null, 2) + "\n");
+    return true;
+  }
+
   console.log(`
   ___  ____ ___ ____ _  _ ____ ____ ____ ___
   |__] |__|  |  |    |__| |    |  | |__/ |  \\
@@ -661,20 +698,14 @@ if (!cmd || cmd === "install" || cmd === "agent" || cmd?.startsWith("--")) {
       },
     };
 
-    if (existsSync(cursorPath)) {
-      try {
-        const existing = JSON.parse(readFileSync(cursorPath, "utf-8"));
-        existing.mcpServers = existing.mcpServers || {};
-        existing.mcpServers.patchcord = cursorConfig.mcpServers.patchcord;
-        writeFileSync(cursorPath, JSON.stringify(existing, null, 2) + "\n");
-      } catch {
-        writeFileSync(cursorPath, JSON.stringify(cursorConfig, null, 2) + "\n");
-      }
-    } else {
-      writeFileSync(cursorPath, JSON.stringify(cursorConfig, null, 2) + "\n");
+    const cursorOk = updateJsonConfig(cursorPath, (obj) => {
+      obj.mcpServers = obj.mcpServers || {};
+      obj.mcpServers.patchcord = cursorConfig.mcpServers.patchcord;
+    });
+    if (cursorOk) {
+      console.log(`\n  ${green}✓${r} Cursor configured: ${dim}${cursorPath}${r}`);
+      console.log(`  ${dim}Per-project only — other projects won't see this agent.${r}`);
     }
-    console.log(`\n  ${green}✓${r} Cursor configured: ${dim}${cursorPath}${r}`);
-    console.log(`  ${dim}Per-project only — other projects won't see this agent.${r}`);
   } else if (isWindsurf) {
     // Windsurf: global only (~/.codeium/windsurf/mcp_config.json)
     const wsPath = join(HOME, ".codeium", "windsurf", "mcp_config.json");
@@ -690,84 +721,72 @@ if (!cmd || cmd === "install" || cmd === "agent" || cmd?.startsWith("--")) {
       },
     };
 
-    if (existsSync(wsPath)) {
-      try {
-        const content = readFileSync(wsPath, "utf-8").trim();
-        const existing = content ? JSON.parse(content) : {};
-        existing.mcpServers = existing.mcpServers || {};
-        existing.mcpServers.patchcord = wsConfig.mcpServers.patchcord;
-        writeFileSync(wsPath, JSON.stringify(existing, null, 2) + "\n");
-      } catch {
-        writeFileSync(wsPath, JSON.stringify(wsConfig, null, 2) + "\n");
-      }
-    } else {
-      mkdirSync(join(HOME, ".codeium", "windsurf"), { recursive: true });
-      writeFileSync(wsPath, JSON.stringify(wsConfig, null, 2) + "\n");
+    const wsOk = updateJsonConfig(wsPath, (obj) => {
+      obj.mcpServers = obj.mcpServers || {};
+      obj.mcpServers.patchcord = wsConfig.mcpServers.patchcord;
+    });
+    if (wsOk) {
+      console.log(`\n  ${green}✓${r} Windsurf configured: ${dim}${wsPath}${r}`);
+      console.log(`  ${yellow}Global config — all Windsurf projects share this agent.${r}`);
     }
-    console.log(`\n  ${green}✓${r} Windsurf configured: ${dim}${wsPath}${r}`);
-    console.log(`  ${yellow}Global config — all Windsurf projects share this agent.${r}`);
   } else if (isGemini) {
     // Gemini CLI: global only (~/.gemini/settings.json)
     const geminiPath = join(HOME, ".gemini", "settings.json");
-    let geminiSettings = (existsSync(geminiPath) && safeReadJson(geminiPath)) || {};
-    if (!geminiSettings.mcpServers) geminiSettings.mcpServers = {};
-    geminiSettings.mcpServers.patchcord = {
-      httpUrl: `${serverUrl}/mcp`,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "X-Patchcord-Machine": hostname,
-      },
-    };
-    // Clean up deprecated tools.allowed if present (removed in Gemini CLI 1.0)
-    if (geminiSettings.tools?.allowed) {
-      geminiSettings.tools.allowed = geminiSettings.tools.allowed.filter(t => !t.startsWith("mcp_patchcord_"));
-      if (geminiSettings.tools.allowed.length === 0) delete geminiSettings.tools;
+    const geminiOk = updateJsonConfig(geminiPath, (obj) => {
+      obj.mcpServers = obj.mcpServers || {};
+      obj.mcpServers.patchcord = {
+        httpUrl: `${serverUrl}/mcp`,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "X-Patchcord-Machine": hostname,
+        },
+      };
+      // Clean up deprecated tools.allowed if present (removed in Gemini CLI 1.0)
+      if (obj.tools?.allowed) {
+        obj.tools.allowed = obj.tools.allowed.filter(t => !t.startsWith("mcp_patchcord_"));
+        if (obj.tools.allowed.length === 0) delete obj.tools;
+      }
+    });
+    if (geminiOk) {
+      console.log(`\n  ${green}✓${r} Gemini CLI configured: ${dim}${geminiPath}${r}`);
+      console.log(`  ${yellow}Global config — all Gemini CLI projects share this agent.${r}`);
     }
-    mkdirSync(join(HOME, ".gemini"), { recursive: true });
-    writeFileSync(geminiPath, JSON.stringify(geminiSettings, null, 2) + "\n");
-    console.log(`\n  ${green}✓${r} Gemini CLI configured: ${dim}${geminiPath}${r}`);
-    console.log(`  ${yellow}Global config — all Gemini CLI projects share this agent.${r}`);
   } else if (isZed) {
     // Zed: global settings.json → context_servers
     const zedPath = process.platform === "darwin"
       ? join(HOME, "Library", "Application Support", "Zed", "settings.json")
       : join(HOME, ".config", "zed", "settings.json");
-    let zedSettings = (existsSync(zedPath) && safeReadJson(zedPath)) || {};
-    if (!zedSettings.context_servers) zedSettings.context_servers = {};
-    zedSettings.context_servers.patchcord = {
-      url: `${serverUrl}/mcp`,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "X-Patchcord-Machine": hostname,
-      },
-    };
-    const zedDir = process.platform === "darwin"
-      ? join(HOME, "Library", "Application Support", "Zed")
-      : join(HOME, ".config", "zed");
-    mkdirSync(zedDir, { recursive: true });
-    writeFileSync(zedPath, JSON.stringify(zedSettings, null, 2) + "\n");
-    console.log(`\n  ${green}✓${r} Zed configured: ${dim}${zedPath}${r}`);
-    console.log(`  ${yellow}Global config — all Zed projects share this agent.${r}`);
+    const zedOk = updateJsonConfig(zedPath, (obj) => {
+      obj.context_servers = obj.context_servers || {};
+      obj.context_servers.patchcord = {
+        url: `${serverUrl}/mcp`,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "X-Patchcord-Machine": hostname,
+        },
+      };
+    });
+    if (zedOk) {
+      console.log(`\n  ${green}✓${r} Zed configured: ${dim}${zedPath}${r}`);
+      console.log(`  ${yellow}Global config — all Zed projects share this agent.${r}`);
+    }
   } else if (isOpenCode) {
     // OpenCode: per-project opencode.json → mcp
     const ocPath = join(cwd, "opencode.json");
-    let ocConfig = {};
-    if (existsSync(ocPath)) {
-      try {
-        ocConfig = JSON.parse(readFileSync(ocPath, "utf-8"));
-      } catch {}
+    const ocOk = updateJsonConfig(ocPath, (obj) => {
+      obj.mcp = obj.mcp || {};
+      obj.mcp.patchcord = {
+        type: "remote",
+        url: `${serverUrl}/mcp`,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "X-Patchcord-Machine": hostname,
+        },
+      };
+    });
+    if (ocOk) {
+      console.log(`\n  ${green}✓${r} OpenCode configured: ${dim}${ocPath}${r}`);
     }
-    if (!ocConfig.mcp) ocConfig.mcp = {};
-    ocConfig.mcp.patchcord = {
-      type: "remote",
-      url: `${serverUrl}/mcp`,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "X-Patchcord-Machine": hostname,
-      },
-    };
-    writeFileSync(ocPath, JSON.stringify(ocConfig, null, 2) + "\n");
-    console.log(`\n  ${green}✓${r} OpenCode configured: ${dim}${ocPath}${r}`);
   } else if (isOpenClaw) {
     // OpenClaw: global ~/.openclaw/openclaw.json → mcp.servers
     // Try CLI first, fall back to direct file write
@@ -785,28 +804,23 @@ if (!cmd || cmd === "install" || cmd === "agent" || cmd?.startsWith("--")) {
       console.log(`\n  ${green}✓${r} OpenClaw configured via CLI: ${dim}openclaw mcp set${r}`);
     } else {
       // CLI not available — write config directly
-      const openclawDir = join(HOME, ".openclaw");
-      const openclawPath = join(openclawDir, "openclaw.json");
-      let openclawConfig = {};
-      if (existsSync(openclawPath)) {
-        try {
-          openclawConfig = JSON.parse(readFileSync(openclawPath, "utf-8"));
-        } catch {}
+      const openclawPath = join(HOME, ".openclaw", "openclaw.json");
+      const openclawOk = updateJsonConfig(openclawPath, (obj) => {
+        obj.mcp = obj.mcp || {};
+        obj.mcp.servers = obj.mcp.servers || {};
+        obj.mcp.servers.patchcord = {
+          url: `${serverUrl}/mcp`,
+          transport: "streamable-http",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "X-Patchcord-Machine": hostname,
+          },
+          connectionTimeoutMs: 300000,
+        };
+      });
+      if (openclawOk) {
+        console.log(`\n  ${green}✓${r} OpenClaw configured: ${dim}${openclawPath}${r}`);
       }
-      if (!openclawConfig.mcp) openclawConfig.mcp = {};
-      if (!openclawConfig.mcp.servers) openclawConfig.mcp.servers = {};
-      openclawConfig.mcp.servers.patchcord = {
-        url: `${serverUrl}/mcp`,
-        transport: "streamable-http",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "X-Patchcord-Machine": hostname,
-        },
-        connectionTimeoutMs: 300000,
-      };
-      mkdirSync(openclawDir, { recursive: true });
-      writeFileSync(openclawPath, JSON.stringify(openclawConfig, null, 2) + "\n");
-      console.log(`\n  ${green}✓${r} OpenClaw configured: ${dim}${openclawPath}${r}`);
     }
     console.log(`  ${yellow}Global config — all OpenClaw channels share this agent.${r}`);
     console.log(`  ${dim}Run: openclaw gateway restart${r}`);
@@ -818,32 +832,28 @@ if (!cmd || cmd === "install" || cmd === "agent" || cmd?.startsWith("--")) {
     // Antigravity: global ~/.gemini/antigravity/mcp_config.json → mcpServers
     const agDir = join(HOME, ".gemini", "antigravity");
     const agPath = join(agDir, "mcp_config.json");
-    let agConfig = {};
-    if (existsSync(agPath)) {
-      try {
-        agConfig = JSON.parse(readFileSync(agPath, "utf-8"));
-      } catch {}
+    const agOk = updateJsonConfig(agPath, (obj) => {
+      obj.mcpServers = obj.mcpServers || {};
+      obj.mcpServers.patchcord = {
+        serverUrl: `${serverUrl}/mcp`,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "X-Patchcord-Machine": hostname,
+        },
+      };
+    });
+    if (agOk) {
+      console.log(`\n  ${green}✓${r} Antigravity configured: ${dim}${agPath}${r}`);
+      // Install global skills
+      const agSkillDir = join(agDir, "skills", "patchcord");
+      const agWaitDir = join(agDir, "skills", "patchcord-wait");
+      mkdirSync(agSkillDir, { recursive: true });
+      mkdirSync(agWaitDir, { recursive: true });
+      cpSync(join(pluginRoot, "skills", "inbox", "SKILL.md"), join(agSkillDir, "SKILL.md"));
+      cpSync(join(pluginRoot, "skills", "wait", "SKILL.md"), join(agWaitDir, "SKILL.md"));
+      console.log(`  ${green}✓${r} Skills installed: ${dim}patchcord${r}, ${dim}patchcord-wait${r}`);
+      console.log(`  ${yellow}Global config — all Antigravity projects share this agent.${r}`);
     }
-    if (!agConfig.mcpServers) agConfig.mcpServers = {};
-    agConfig.mcpServers.patchcord = {
-      serverUrl: `${serverUrl}/mcp`,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "X-Patchcord-Machine": hostname,
-      },
-    };
-    mkdirSync(agDir, { recursive: true });
-    writeFileSync(agPath, JSON.stringify(agConfig, null, 2) + "\n");
-    console.log(`\n  ${green}✓${r} Antigravity configured: ${dim}${agPath}${r}`);
-    // Install global skills
-    const agSkillDir = join(agDir, "skills", "patchcord");
-    const agWaitDir = join(agDir, "skills", "patchcord-wait");
-    mkdirSync(agSkillDir, { recursive: true });
-    mkdirSync(agWaitDir, { recursive: true });
-    cpSync(join(pluginRoot, "skills", "inbox", "SKILL.md"), join(agSkillDir, "SKILL.md"));
-    cpSync(join(pluginRoot, "skills", "wait", "SKILL.md"), join(agWaitDir, "SKILL.md"));
-    console.log(`  ${green}✓${r} Skills installed: ${dim}patchcord${r}, ${dim}patchcord-wait${r}`);
-    console.log(`  ${yellow}Global config — all Antigravity projects share this agent.${r}`);
   } else if (isCline) {
     // Cline VS Code extension: global cline_mcp_settings.json
     // Config lives in VS Code's globalStorage for saoudrizwan.claude-dev
@@ -884,24 +894,22 @@ if (!cmd || cmd === "install" || cmd === "agent" || cmd?.startsWith("--")) {
     }
 
     const clinePath = join(clineSettingsDir, "cline_mcp_settings.json");
-    let clineConfig = {};
-    if (existsSync(clinePath)) {
-      try { clineConfig = JSON.parse(readFileSync(clinePath, "utf-8")); } catch {}
+    const clineOk = updateJsonConfig(clinePath, (obj) => {
+      obj.mcpServers = obj.mcpServers || {};
+      obj.mcpServers.patchcord = {
+        url: `${serverUrl}/mcp`,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "X-Patchcord-Machine": hostname,
+        },
+        disabled: false,
+        alwaysAllow: [],
+      };
+    });
+    if (clineOk) {
+      console.log(`\n  ${green}✓${r} Cline configured: ${dim}${clinePath}${r}`);
+      console.log(`  ${yellow}Global config — all Cline projects share this agent.${r}`);
     }
-    if (!clineConfig.mcpServers) clineConfig.mcpServers = {};
-    clineConfig.mcpServers.patchcord = {
-      url: `${serverUrl}/mcp`,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "X-Patchcord-Machine": hostname,
-      },
-      disabled: false,
-      alwaysAllow: [],
-    };
-    mkdirSync(clineSettingsDir, { recursive: true });
-    writeFileSync(clinePath, JSON.stringify(clineConfig, null, 2) + "\n");
-    console.log(`\n  ${green}✓${r} Cline configured: ${dim}${clinePath}${r}`);
-    console.log(`  ${yellow}Global config — all Cline projects share this agent.${r}`);
   } else if (isVSCode) {
     // VS Code: write .vscode/mcp.json (per-project)
     const vscodeDir = join(cwd, ".vscode");
@@ -920,20 +928,14 @@ if (!cmd || cmd === "install" || cmd === "agent" || cmd?.startsWith("--")) {
       },
     };
 
-    if (existsSync(vscodePath)) {
-      try {
-        const existing = JSON.parse(readFileSync(vscodePath, "utf-8"));
-        existing.servers = existing.servers || {};
-        existing.servers.patchcord = vscodeConfig.servers.patchcord;
-        writeFileSync(vscodePath, JSON.stringify(existing, null, 2) + "\n");
-      } catch {
-        writeFileSync(vscodePath, JSON.stringify(vscodeConfig, null, 2) + "\n");
-      }
-    } else {
-      writeFileSync(vscodePath, JSON.stringify(vscodeConfig, null, 2) + "\n");
+    const vscodeOk = updateJsonConfig(vscodePath, (obj) => {
+      obj.servers = obj.servers || {};
+      obj.servers.patchcord = vscodeConfig.servers.patchcord;
+    });
+    if (vscodeOk) {
+      console.log(`\n  ${green}✓${r} VS Code configured: ${dim}${vscodePath}${r}`);
+      console.log(`  ${dim}Requires GitHub Copilot extension with agent mode enabled.${r}`);
     }
-    console.log(`\n  ${green}✓${r} VS Code configured: ${dim}${vscodePath}${r}`);
-    console.log(`  ${dim}Requires GitHub Copilot extension with agent mode enabled.${r}`);
   } else if (isCodex) {
     // Codex: write MCP config + per-project skills + global plugin
     // Per-project skills (working @patchcord in Codex v0.117)
@@ -1010,19 +1012,17 @@ if (!cmd || cmd === "install" || cmd === "agent" || cmd?.startsWith("--")) {
 
     // Personal marketplace entry (relative path from marketplace root)
     const marketplacePath = join(marketplaceDir, "marketplace.json");
-    let marketplace = { name: "patchcord", interface: { displayName: "Patchcord" }, plugins: [] };
-    if (existsSync(marketplacePath)) {
-      try { marketplace = JSON.parse(readFileSync(marketplacePath, "utf-8")); } catch {}
-    }
-    if (!marketplace.plugins) marketplace.plugins = [];
-    marketplace.plugins = marketplace.plugins.filter(p => p.name !== "patchcord");
-    marketplace.plugins.push({
-      name: "patchcord",
-      source: { source: "local", path: "./patchcord" },
-      policy: { installation: "INSTALLED_BY_DEFAULT", authentication: "ON_INSTALL" },
-      category: "Productivity",
+    updateJsonConfig(marketplacePath, (obj) => {
+      if (!obj.name) obj.name = "patchcord";
+      if (!obj.interface) obj.interface = { displayName: "Patchcord" };
+      obj.plugins = (obj.plugins || []).filter(p => p.name !== "patchcord");
+      obj.plugins.push({
+        name: "patchcord",
+        source: { source: "local", path: "./patchcord" },
+        policy: { installation: "INSTALLED_BY_DEFAULT", authentication: "ON_INSTALL" },
+        category: "Productivity",
+      });
     });
-    writeFileSync(marketplacePath, JSON.stringify(marketplace, null, 2) + "\n");
 
     // Also install global skills (working @patchcord — plugin/read broken in Codex v0.117)
     const globalSkillDir = join(homedir(), ".agents", "skills", "patchcord");
@@ -1052,17 +1052,15 @@ if (!cmd || cmd === "install" || cmd === "agent" || cmd?.startsWith("--")) {
       },
     };
 
-    if (existsSync(mcpPath)) {
-      try {
-        const existing = JSON.parse(readFileSync(mcpPath, "utf-8"));
-        existing.mcpServers = existing.mcpServers || {};
-        existing.mcpServers.patchcord = mcpConfig.mcpServers.patchcord;
-        writeFileSync(mcpPath, JSON.stringify(existing, null, 2) + "\n");
-      } catch {
-        writeFileSync(mcpPath, JSON.stringify(mcpConfig, null, 2) + "\n");
-      }
-    } else {
-      writeFileSync(mcpPath, JSON.stringify(mcpConfig, null, 2) + "\n");
+    const mcpOk = updateJsonConfig(mcpPath, (obj) => {
+      obj.mcpServers = obj.mcpServers || {};
+      obj.mcpServers.patchcord = mcpConfig.mcpServers.patchcord;
+    });
+    if (!mcpOk) {
+      // Existing .mcp.json was malformed — helper already explained.
+      // Bail with non-zero so wrapper scripts notice; the user fixes
+      // their JSON and re-runs.
+      process.exit(1);
     }
     console.log(`\n  ${green}✓${r} Claude Code configured: ${dim}${mcpPath}${r}`);
 
