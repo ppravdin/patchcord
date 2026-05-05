@@ -127,7 +127,7 @@ if [ -n "$pc_url" ] && [ -n "$pc_token" ]; then
                     if [ -f "$sub_pidfile" ]; then
                         sub_pid=$(cat "$sub_pidfile" 2>/dev/null)
                         if [ -n "$sub_pid" ] && kill -0 "$sub_pid" 2>/dev/null; then
-                            pc_part+=" ${green}●${reset}"
+                            pc_part+=" ${green}◉${reset}"
                         fi
                     fi
                 fi
