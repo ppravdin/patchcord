@@ -118,6 +118,19 @@ if [ -n "$pc_url" ] && [ -n "$pc_token" ]; then
                 if [ -n "$machine" ]; then
                     pc_part+=" ${dim}(${machine})${reset}"
                 fi
+                # Subscribe indicator: green dot when subscribe.mjs is alive for
+                # this agent (push-receiving). Pidfile path matches the one
+                # subscribe.mjs writes — see scripts/subscribe.mjs. Omitted
+                # when the listener isn't running (default polling-only state).
+                if [ -n "$namespace_id" ] && [ "$namespace_id" != "null" ]; then
+                    sub_pidfile="/tmp/patchcord_subscribe_${namespace_id}_${agent_id}.pid"
+                    if [ -f "$sub_pidfile" ]; then
+                        sub_pid=$(cat "$sub_pidfile" 2>/dev/null)
+                        if [ -n "$sub_pid" ] && kill -0 "$sub_pid" 2>/dev/null; then
+                            pc_part+=" ${green}●${reset}"
+                        fi
+                    fi
+                fi
             fi
 
             if [ "$count" -gt 0 ] 2>/dev/null; then
